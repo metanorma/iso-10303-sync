@@ -13,8 +13,9 @@ on:
         options: ['true', 'false']
 
 # This workflow runs in metanorma/iso-10303-sync but operates on
-# metanorma/iso-10303 via the `target` remote (using PRIVATE_TOKEN_GITHUB).
-# Conflict-tracking issues are opened in iso-10303 via GH_REPO env.
+# metanorma/iso-10303 (checked out at ./target via actions/checkout@v6
+# with PRIVATE_TOKEN_GITHUB for auth). Conflict-tracking issues are
+# opened on iso-10303 via GH_REPO env.
 permissions:
   contents: read
 
@@ -27,36 +28,42 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sync repo (for the script)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+
+      - name: Checkout target repo (metanorma/iso-10303)
+        uses: actions/checkout@v6
+        with:
+          repository: metanorma/iso-10303
+          token: ${{ secrets.PRIVATE_TOKEN_GITHUB }}
+          path: target
+          fetch-depth: 0
 
       - name: Configure git
+        working-directory: target
         run: |
           git config user.name  "iso-mirror-bot"
           git config user.email "actions@github.com"
 
-      - name: Add target remote (metanorma/iso-10303)
-        env:
-          GH_PAT: ${{ secrets.PRIVATE_TOKEN_GITHUB }}
-        run: |
-          git remote add target "https://x-access-token:${GH_PAT}@github.com/metanorma/iso-10303.git"
-
       - name: Add iso remote (sd.iso.org Bitbucket pilot)
+        working-directory: target
         env:
           ISO_BB_PAT: ${{ secrets.ISO_BB_PAT }}
         run: |
           git remote add iso "https://:${ISO_BB_PAT}@sd.iso.org/bitbucket-pilot/scm/isotc184sc4/wg12-step.git"
 
       - name: Fetch iso
+        working-directory: target
         run: git fetch iso '+refs/heads/*:refs/remotes/iso/*' --prune
 
-      - name: Fetch target
-        run: git fetch target '+refs/heads/*:refs/remotes/target/*' --prune
+      - name: Fetch origin (= iso-10303)
+        working-directory: target
+        run: git fetch origin '+refs/heads/*:refs/remotes/origin/*' --prune
 
       - name: Run sync
+        working-directory: target
         env:
           GH_TOKEN: ${{ secrets.PRIVATE_TOKEN_GITHUB }}
           GH_REPO: metanorma/iso-10303
           DRY_RUN: ${{ inputs.dry_run || 'false' }}
           PROXY_LAG_THRESHOLD: ${{ vars.PROXY_LAG_THRESHOLD }}
-          ORIGIN_REMOTE: target
-        run: bash scripts/iso-mirror-sync.sh
+        run: bash "$GITHUB_WORKSPACE/scripts/iso-mirror-sync.sh"
