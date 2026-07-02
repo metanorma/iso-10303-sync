@@ -112,7 +112,7 @@ flowchart LR
 
 | Secret | Purpose | Status |
 |---|---|---|
-| `ISO_BB_PAT` | Bitbucket pilot **read-only** PAT (used by mirror bot). The PAT encodes the owning account, so no separate username secret is required. The workflow passes it via `Authorization: Basic base64(:${PAT})` header (git `extraheader` config, scoped to `sd.iso.org`) — *not* URL-embedded, so a failed fetch can never leak the PAT value in error messages. | **Added 2026-07-02** |
+| `ISO_BB_PAT` | Bitbucket pilot **read-only** PAT (used by mirror bot). The PAT encodes the owning account, so no separate username secret is required. The workflow writes a credential helper script that reads the PAT from env at invocation time (the PAT is never written to `.git/config` or process argv), scoped to `sd.iso.org`. On fetch failure, only the URL — never the PAT — appears in error messages. | **Added 2026-07-02** |
 | `ISO_BB_PAT_PROXY` | Bitbucket pilot **read+write** PAT (used by proxy users locally — never in CI) | Distribute to proxy users out-of-band |
 | `METANORMA_CI_PAT_TOKEN` | GitHub PAT with `repo` scope on `metanorma/iso-10303`. Used by bot to push branches and to open conflict-tracking issues there. The dedicated name (rather than reusing `PRIVATE_TOKEN_GITHUB` from `build.yml`) keeps the mirror bot's blast radius separate from build CI. | To add to `metanorma/iso-10303-sync` |
 
@@ -307,17 +307,26 @@ jobs:
           git config user.email "metanorma@ribose.com"
 
       - name: Add iso remote and configure BB auth
-        working-directory: target
         env:
           ISO_BB_PAT: ${{ secrets.ISO_BB_PAT }}
         run: |
+          # Write a credential helper that reads PAT from env at invocation time.
+          # The PAT is never written to .git/config or process argv — only the
+          # helper script path is registered. On fetch failure, only the URL
+          # (no credentials) appears in error messages.
+          cat > "$HOME/bb-cred-helper.sh" <<'EOF'
+          #!/bin/bash
+          echo username=x-token-auth
+          echo "password=$ISO_BB_PAT"
+          EOF
+          chmod +x "$HOME/bb-cred-helper.sh"
+          git config --global credential."https://sd.iso.org".helper "$HOME/bb-cred-helper.sh"
+          cd target
           git remote add iso "https://sd.iso.org/bitbucket-pilot/scm/isotc184sc4/wg12-step.git"
-          # Pass the PAT via Authorization header (not URL-embedded) so a
-          # failed fetch can never leak it. extraheader is scoped to sd.iso.org.
-          AUTH=$(printf ':%s' "$ISO_BB_PAT" | base64 -w0)
-          git config "http.https://sd.iso.org/.extraheader" "Authorization: Basic ${AUTH}"
 
       - name: Fetch iso
+        env:
+          ISO_BB_PAT: ${{ secrets.ISO_BB_PAT }}
         working-directory: target
         run: git fetch iso '+refs/heads/*:refs/remotes/iso/*' --prune
 
