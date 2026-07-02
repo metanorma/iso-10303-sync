@@ -14,17 +14,20 @@ while read -r gh_ref; do
   # main is Metanorma's own branch, not tracked by the mirror — skip.
   [[ "${gh_branch}" == "HEAD" || "${gh_branch}" == "main" ]] && continue
 
-  case "${gh_branch}" in
-    SC4UTILITI-*|TCSC410303-*|SVRP-*|feature/SC4UTILITI-*|feature/TCSC410303-*|bugfix/TCSC410303-*|trial/*|trial-schema/*) ;;
-    *) continue ;;
-  esac
+  # Proxy-intended branches on GitHub use the `to-iso/` prefix per spec §5.3.A.
+  # Strip the prefix to match against the ISO-side branch name.
+  if [[ "${gh_branch}" == to-iso/* ]]; then
+    iso_branch="${gh_branch#to-iso/}"
+  else
+    continue   # not a proxy-intended branch; ignore
+  fi
 
   gh_sha="$(git rev-parse "${gh_ref}")"
-  iso_ref="refs/remotes/iso/${gh_branch}"
+  iso_ref="refs/remotes/iso/${iso_branch}"
 
   if ! git rev-parse --verify --quiet "${iso_ref}" >/dev/null; then
     n="$(git rev-list --count "iso/develop..${gh_sha}" 2>/dev/null || echo "?")"
-    echo "- ${gh_branch} — NEW on ISO (not yet pushed); ${n} commit(s) on top of iso/develop"
+    echo "- ${gh_branch} — NEW on ISO (stripped: ${iso_branch}); ${n} commit(s) on top of iso/develop"
     continue
   fi
 

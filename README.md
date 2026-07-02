@@ -61,6 +61,8 @@ bash scripts/iso-proxy-queue.sh
 
 Requires `iso` and `origin` (= your `iso-10303` remote) configured in your global git config or in some local checkout. See `docs/iso-mirror-sync.md` §7 for the full proxy flow.
 
+**Branch naming for proxy pushes:** proxy-intended branches on GitHub are prefixed `to-iso/` (per spec §5.3.A). For example, ISO `feature/TCSC410303-3001-foo` becomes `to-iso/feature/TCSC410303-3001-foo` on GitHub. The proxy procedure strips the prefix on push to ISO: `git push iso "origin/$BRANCH:${BRANCH#to-iso/}"`. See `docs/iso-mirror-sync.md` §7.5 for the full procedure.
+
 ## See also
 
 - **Full spec:** [`docs/iso-mirror-sync.md`](docs/iso-mirror-sync.md)

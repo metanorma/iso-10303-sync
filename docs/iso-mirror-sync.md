@@ -149,35 +149,47 @@ trial/<label>, trial-schema/<label>  # experiments
 
 ### 5.3 GitHub-side branch naming
 
-Two valid categories (used by both sides when applicable):
+Three valid categories:
 
 **A. Proxy-intended branches** (the normal case for both ISO-farmed-out and Metanorma-originated ticket work).
-- **Use the matching ISO naming pattern directly on GitHub** — e.g., `feature/TCSC410303-3001-new-module-foo`. This makes the eventual proxy push (§7) a 1:1 name match with no renaming step.
-- The branch will eventually exist on both sides at the same SHA after the proxy round-trip.
+- **Prefix with `to-iso/` followed by the matching ISO branch name** — e.g., ISO `feature/TCSC410303-3001-new-module-foo` → GitHub `to-iso/feature/TCSC410303-3001-new-module-foo`. The `to-iso/` prefix signals proxy intent unambiguously and prevents confusion with mirrored ISO branches.
+- Naming examples:
+  - ISO `develop` → GitHub `to-iso/develop`
+  - ISO `main` → GitHub `to-iso/main` (if proxy-pushing to ISO release; rare)
+  - ISO `feature/TCSC410303-3001-foo` → GitHub `to-iso/feature/TCSC410303-3001-foo`
+  - ISO `SVRP-1-srlv1-epic` → GitHub `to-iso/SVRP-1-srlv1-epic` (batch updates targeting the SVRP epic)
+- The branch is eventually proxy-pushed to ISO and may be deleted after ISO merge (or kept per §6.5 v1).
+- The mirror itself ignores these branches (it only walks `refs/remotes/iso/*`), so the `to-iso/` namespace doesn't interfere with FF mirroring.
 
-**B. GitHub-local branches** (experiments, tooling, work not intended for ISO).
-- Use prefixes that cannot be mistaken for ISO patterns:
+**B. Mirror-passthrough branches** (pure ISO mirrors, no Metanorma content).
+- Same name as the ISO branch — e.g., `develop`, `main`, `feature/TCSC410303-3001-foo`.
+- FF-only mirrors maintained by the bot per §6.3. No Metanorma commits land here directly.
+
+**C. GitHub-local branches** (experiments, tooling, work not intended for ISO).
+- Use prefixes that cannot be mistaken for ISO patterns or proxy intent:
+  - `mn/*` (e.g., `mn/main` is Metanorma's default integration branch — see §5.1)
   - `mf-*` (already in use)
   - `gh-*`
   - `copilot/*`
   - Numeric GitHub-issue refs: `<NNN>-*` (e.g., `588-*`, `697-*`)
 - These are never proxied. The mirror ignores them entirely (it only walks `refs/remotes/iso/*`).
 
-### 5.4 What about `main` protection?
+### 5.4 What about `develop` / `main` protection?
 
-If GitHub branch protection is enabled on `main` (likely, given the PR-driven flow), the mirror bot's hourly fast-forward push to `main` will be **rejected**. Three options — pick one in §11/§12:
+If GitHub branch protection is enabled on `develop` or `main` (likely, given the PR-driven flow), the mirror bot's hourly fast-forward push to these branches will be **rejected**. Three options — pick one in §11/§12:
 
-- **(a)** Exempt the bot's PAT (`METANORMA_CI_PAT_TOKEN`) from `main` protection via "Allow specified actors to bypass". Recommended.
-- **(b)** Have the bot open a fast-forward PR against `main` and auto-merge. Slower; preserves audit trail.
-- **(c)** Disable protection on `main`. Not recommended.
+- **(a)** Exempt the bot's PAT (`METANORMA_CI_PAT_TOKEN`) from `develop` / `main` protection via "Allow specified actors to bypass". Recommended.
+- **(b)** Have the bot open a fast-forward PR against `develop` / `main` and auto-merge. Slower; preserves audit trail.
+- **(c)** Disable protection on `develop` / `main`. Not recommended.
 
 ### 5.5 Branch ownership and the JIRA contract
 
-Because both sides edit using the same naming convention, the branch name alone cannot tell you who is currently responsible. **JIRA ticket assignment is the canonical source of ownership.**
+Because both sides edit using the same naming convention (with the `to-iso/` prefix on GitHub for proxy-intended work), the branch name alone can be parsed to determine ownership: `to-iso/<ISO-branch-with-JIRA-id>` makes intent + ticket ID visible. **JIRA ticket assignment remains the canonical source of ownership.**
 
 | Rule | Detail |
 |---|---|
 | One branch per ticket | Branch name embeds the ticket ID (`TCSC410303-3001-...`). One ticket = one branch. |
+| `to-iso/` prefix on GitHub | Proxy-intended branches on GitHub are prefixed `to-iso/` (see §5.3.A) so they cannot be confused with mirror-passthrough branches (e.g., `to-iso/feature/TCSC410303-3001-foo` vs `feature/TCSC410303-3001-foo`). |
 | One assignee at a time | The JIRA "Assignee" field names the single current owner. |
 | Owner commits | Only the current assignee (or their delegate) should push commits to the branch on their side. |
 | Reassignment = handoff | When the ticket is reassigned, the new owner takes over the existing branch — they do **not** create a new one. |
@@ -505,14 +517,15 @@ Under the JIRA-driven, feature-branch model (§7.1):
 
 1. ISO creates a JIRA ticket and assigns it to a Metanorma lead.
 2. ISO creates the branch on ISO Bitbucket (`feature/TCSC410303-N-foo`, etc.) — may be a skeleton or contain initial work.
-3. The next mirror run brings the branch to GitHub as the same name.
-4. Metanorma editor/developer checks out the mirrored branch, adds commits, opens a PR on GitHub **targeting the branch** (not `main`).
-5. Reviewers review; editor addresses feedback via additional commits to the same branch.
-6. PR merges into the branch. The branch tip is now ahead of its ISO counterpart.
-7. Proxy user applies `ready-for-iso-proxy` label (or opens a tracking issue) to signal readiness for the proxy push.
-8. Proxy user pushes the branch back to ISO (§7.5), opens ISO PR targeting the chosen release branch.
-9. ISO merges; ISO target release branch advances.
-10. Mirror brings updated target release branch to GitHub; if the BB feature branch persists post-merge, mirror FF's it; if BB deleted it post-merge, the GH copy lingers per §6.5 v1.
+3. The next mirror run brings the branch to GitHub as the same name (mirror-passthrough, §5.3.B).
+4. Metanorma editor/developer checks out the mirrored branch, adds commits.
+5. Metanorma creates a **proxy-intended branch** on GitHub prefixed `to-iso/` (e.g., `to-iso/feature/TCSC410303-N-foo` — see §5.3.A) containing the work, and opens a PR on GitHub targeting it.
+6. Reviewers review; editor addresses feedback via additional commits to the same `to-iso/` branch.
+7. PR merges into the `to-iso/` branch. The branch tip is now ahead of its ISO counterpart.
+8. Proxy user applies `ready-for-iso-proxy` label (or opens a tracking issue) to signal readiness for the proxy push.
+9. Proxy user pushes the branch back to ISO (§7.5 — `to-iso/` prefix stripped on push), opens ISO PR targeting the chosen release branch.
+10. ISO merges; ISO target release branch advances.
+11. Mirror brings updated target release branch to GitHub; the `to-iso/*` branch may be deleted post-merge.
 
 ### 7.4 Signaling readiness — the proxy queue
 
@@ -574,22 +587,28 @@ fi
 Run these locally as a proxy user (with both `iso` and `origin` remotes configured, using your **personal** ISO credentials — never CI secrets):
 
 ```bash
-BRANCH=feature/TCSC410303-3001-new-module-foo
+BRANCH=to-iso/feature/TCSC410303-3001-new-module-foo
 TARGET=develop   # or another ISO release target, e.g. SVRP-SRL-1-...
 
 # 1. Make sure you have the latest from both sides.
 git fetch --all --prune
 
 # 2. Push the GitHub branch (with merged Metanorma work) back to ISO Bitbucket.
+#    The `to-iso/` prefix is stripped on push — ISO receives the branch as
+#    `feature/TCSC410303-3001-new-module-foo`, matching the ISO naming convention.
 #    Fast-forward works because ISO branch is the ancestor (Metanorma only added commits).
-git push iso "origin/$BRANCH:$BRANCH"
+ISO_BRANCH="${BRANCH#to-iso/}"   # strip the to-iso/ prefix for ISO
+git push iso "origin/$BRANCH:$ISO_BRANCH"
 
 # 3. Open a Bitbucket pull request targeting the chosen release branch.
-echo "Open ISO PR: https://sd.iso.org/bitbucket-pilot/projects/ISOTC184SC4/repos/wg12-step/pull-requests?create&sourceBranch=$BRANCH&targetBranch=$TARGET"
+echo "Open ISO PR: https://sd.iso.org/bitbucket-pilot/projects/ISOTC184SC4/repos/wg12-step/pull-requests?create&sourceBranch=$ISO_BRANCH&targetBranch=$TARGET"
 
 # 4. ISO reviewers merge. ISO target branch advances.
 # 5. Next mirror run fast-forwards gh $TARGET (= iso $TARGET) to match.
+# 6. Optionally delete the GitHub to-iso/* branch post-merge (or leave per §6.5 v1).
 ```
+
+**Why `to-iso/` prefix on GitHub?** It makes proxy intent unambiguous at branch-list time. Without it, you can't tell which GitHub branches are pending proxy vs which are mirrored ISO content. ISO doesn't see the prefix (stripped on push); the prefix is purely a GitHub-side annotation.
 
 `$TARGET` is the ISO release branch you want the work to land on. Common values:
 
