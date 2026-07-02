@@ -2,7 +2,12 @@
 
 Hourly one-way mirror of the ISO TC184/SC4 `wg12-step` Bitbucket repository into [`metanorma/iso-10303`](https://github.com/metanorma/iso-10303). Fast-forward only; never force-pushes. Diverged branches open `[iso-mirror] Conflict: <branch>` issues on `metanorma/iso-10303` for human triage.
 
-Branch mapping: ISO `develop` → GitHub `develop` (pure FF-only mirror). GitHub `main` is Metanorma's own integration branch and is **not** tracked by this mirror.
+Branch mapping (name-duplicated, FF-only):
+- ISO `develop` → GitHub `develop`
+- ISO `main` → GitHub `main`
+- ISO `<other>` → GitHub `<same name>`
+
+GitHub `mn/main` is Metanorma's default branch where PRs land. It is **not** tracked by this mirror.
 
 This repo exists as **infrastructure only** — it holds the GitHub Actions workflow, the sync scripts, and the spec. The mirrored content (documents, schemas) lives in `metanorma/iso-10303`; nothing sync-related is committed there.
 
@@ -30,7 +35,7 @@ working-directory: target
   bash $GITHUB_WORKSPACE/scripts/iso-mirror-sync.sh
 ```
 
-The sync script applies the mapping `develop → develop` (name-duplicated), so ISO `develop` advances land on GitHub `develop` (FF only). All other ISO branches land on same-name GitHub branches. GitHub `main` is not tracked.
+The sync script applies the mapping `develop → develop` and `main → main` (both name-duplicated), so ISO `develop` and ISO `main` advances land on GitHub `develop` / `main` (FF only). All other ISO branches land on same-name GitHub branches. GitHub `mn/main` (Metanorma's default) is not tracked.
 
 Conflict-tracking issues are opened on `metanorma/iso-10303` (via `GH_REPO` env) so the team sees them where the content lives — not here.
 

@@ -28,7 +28,7 @@ CONFLICT_ISSUES_UPDATED=()
 map_name() {
   case "$1" in
     develop) echo develop ;;  # name-duplicated: ISO develop → GitHub develop (pure FF-only mirror)
-    main)    echo "" ;;       # ISO release branch — out of scope (§5.1). GitHub main is Metanorma's integration branch, NOT mirrored.
+    main)    echo main ;;     # name-duplicated: ISO main (release) → GitHub main (pure FF-only mirror). GitHub mn/main is Metanorma's default branch, NOT mirrored.
     *)       echo "$1" ;;
   esac
 }
