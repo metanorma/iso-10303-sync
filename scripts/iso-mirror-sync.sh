@@ -1,0 +1,201 @@
+#!/usr/bin/env bash
+# One-way ISO → GitHub mirror. See docs/iso-mirror-sync.md for the full spec.
+#
+# Updates rules per spec §6.3:
+#   - GitHub branch missing      → create from iso_sha
+#   - gh_sha == iso_sha          → no-op
+#   - gh behind (FF possible)    → fast-forward
+#   - gh strictly ahead          → info-only (normal state between proxy events)
+#   - diverged                   → alert + open/update conflict issue, skip
+#
+# Hard rule: the bot NEVER uses --force or --force-with-lease.
+# shellcheck disable=SC2016
+set -euo pipefail
+
+DRY_RUN="${DRY_RUN:-false}"
+PROXY_LAG_THRESHOLD="${PROXY_LAG_THRESHOLD:-}"
+ORIGIN_REMOTE="${ORIGIN_REMOTE:-origin}"
+ORIGIN_REF_PREFIX="refs/remotes/${ORIGIN_REMOTE}/"
+REPO="${GH_REPO:-}"          # owner/repo for gh CLI; auto-detected if empty
+CONFLICT_LABEL="${CONFLICT_LABEL:-iso-mirror-conflict}"
+
+CREATED=()
+FAST_FORWARDED=()
+INFO_AHEAD=()
+CONFLICT_BRANCHES=()
+CONFLICT_ISSUES_OPENED=()
+CONFLICT_ISSUES_UPDATED=()
+
+map_name() {
+  case "$1" in
+    develop) echo main ;;
+    main)    echo "" ;;       # ISO release branch — out of scope (§5.1)
+    *)       echo "$1" ;;
+  esac
+}
+
+is_ancestor() {
+  git merge-base --is-ancestor "$1" "$2" 2>/dev/null
+}
+
+ensure_conflict_label() {
+  [[ -z "${REPO}" || "${DRY_RUN}" == "true" ]] && return 0
+  gh label create "${CONFLICT_LABEL}" \
+    --color BFD4F2 \
+    --description "ISO mirror divergence — needs proxy-user triage (see docs/iso-mirror-sync.md §7.11)" \
+    --repo "${REPO}" >/dev/null 2>&1 || true
+}
+
+find_open_conflict_issue() {
+  local branch="$1"
+  [[ -z "${REPO}" ]] && { echo ""; return; }
+  gh issue list --repo "${REPO}" \
+    --state open \
+    --label "${CONFLICT_LABEL}" \
+    --search "in:title \"[iso-mirror] Conflict: ${branch}\"" \
+    --json number,url --limit 1 \
+    --jq '.[0]'
+}
+
+open_or_update_conflict_issue() {
+  local branch="$1" iso_sha="$2" gh_sha="$3"
+  [[ -z "${REPO}" ]] && { echo "(skipped: no GH_REPO for issue open)"; return; }
+
+  local merge_base n_gh n_iso body title existing number url
+  merge_base="$(git merge-base "${iso_sha}" "${gh_sha}")"
+  n_iso="$(git rev-list --count "${merge_base}..${iso_sha}")"
+  n_gh="$(git rev-list --count "${merge_base}..${gh_sha}")"
+  title="[iso-mirror] Conflict: ${branch}"
+
+  body=$(printf '## Diverged branch — `%s`\n\n' "${branch}")
+  body+=$(printf '| ref | sha |\n|---|---|\n| iso/%s | `%s` |\n| origin/%s | `%s` |\n| merge-base | `%s` |\n\n' \
+    "${branch}" "${iso_sha}" "${branch}" "${gh_sha}" "${merge_base}")
+  body+=$(printf 'ISO has **%d** unique commit(s); GitHub has **%d** unique commit(s).\n\n' "${n_iso}" "${n_gh}")
+
+  body+=$(printf '### ISO-only commits (`%s..%s`)\n```\n' "${merge_base}" "${iso_sha}")
+  body+=$(git log --oneline --no-decorate "${merge_base}..${iso_sha}" | head -30 || true)
+  body+=$'\n```\n\n'
+
+  body+=$(printf '### GitHub-only commits (`%s..%s`)\n```\n' "${merge_base}" "${gh_sha}")
+  body+=$(git log --oneline --no-decorate "${merge_base}..${gh_sha}" | head -30 || true)
+  body+=$'\n```\n\n'
+
+  body+='### Suggested resolutions (see docs/iso-mirror-sync.md §7.11)\n'
+  body+='- If GitHub'\''s unique commits are still pending proxy (§7) → do that first; once ISO merges, the mirror fast-forwards.\n'
+  body+='- If both sides have unrelated in-flight work → coordinate via JIRA; one side pauses, the other proceeds, then sync.\n'
+  body+='- If GitHub'\''s unique commits are stale → open a PR to reset GitHub to ISO (force-push by a human; never the bot).\n'
+
+  existing="$(find_open_conflict_issue "${branch}")"
+  if [[ -n "${existing}" ]]; then
+    number="$(printf '%s' "${existing}" | jq -r '.number')"
+    url="$(printf '%s' "${existing}" | jq -r '.url')"
+    if [[ "${DRY_RUN}" != "true" ]]; then
+      printf '%b' "${body}" | gh issue comment "${number}" --repo "${REPO}" --body-file -
+    fi
+    CONFLICT_ISSUES_UPDATED+=("#${number} (${branch})")
+    echo "${url}"
+  else
+    if [[ "${DRY_RUN}" != "true" ]]; then
+      url="$(printf '%b' "${body}" | gh issue create --repo "${REPO}" \
+        --title "${title}" \
+        --label "${CONFLICT_LABEL}" \
+        --body-file -)"
+    else
+      url="(dry-run)"
+    fi
+    CONFLICT_ISSUES_OPENED+=("${branch}: ${url}")
+    echo "${url}"
+  fi
+}
+
+ensure_conflict_label
+
+while read -r iso_ref; do
+  iso_branch="${iso_ref#refs/remotes/iso/}"
+  [[ "${iso_branch}" == "HEAD" ]] && continue
+
+  iso_sha="$(git rev-parse "${iso_ref}")"
+  gh_branch="$(map_name "${iso_branch}")"
+  [[ -z "${gh_branch}" ]] && continue
+
+  gh_ref="${ORIGIN_REF_PREFIX}${gh_branch}"
+
+  if ! git rev-parse --verify --quiet "${gh_ref}" >/dev/null; then
+    echo "[create] ${gh_branch} <- ${iso_sha}"
+    CREATED+=("${gh_branch}")
+    if [[ "${DRY_RUN}" != "true" ]]; then
+      git push "${ORIGIN_REMOTE}" "${iso_sha}:refs/heads/${gh_branch}"
+    fi
+    continue
+  fi
+
+  gh_sha="$(git rev-parse "${gh_ref}")"
+  if [[ "${gh_sha}" == "${iso_sha}" ]]; then
+    echo "[equal]  ${gh_branch}"
+    continue
+  fi
+
+  if is_ancestor "${gh_sha}" "${iso_sha}"; then
+    echo "[ff]     ${gh_branch} ${gh_sha} -> ${iso_sha}"
+    FAST_FORWARDED+=("${gh_branch}")
+    if [[ "${DRY_RUN}" != "true" ]]; then
+      git push "${ORIGIN_REMOTE}" "${iso_sha}:refs/heads/${gh_branch}"
+    fi
+    continue
+  fi
+
+  if is_ancestor "${iso_sha}" "${gh_sha}"; then
+    n="$(git rev-list --count "${iso_sha}..${gh_sha}")"
+    echo "[info]   ${gh_branch} ahead of ISO by ${n} commit(s) — pending proxy (§7)"
+    INFO_AHEAD+=("${gh_branch} (${n} ahead)")
+    if [[ "${gh_branch}" == "main" && -n "${PROXY_LAG_THRESHOLD}" && "${n}" -gt "${PROXY_LAG_THRESHOLD}" ]]; then
+      CONFLICT_BRANCHES+=("${gh_branch} (main ahead of iso/develop by ${n} > ${PROXY_LAG_THRESHOLD} — proxy lag) iso=${iso_sha} gh=${gh_sha}")
+    fi
+    continue
+  fi
+
+  echo "[alert]  ${gh_branch} DIVERGED — iso=${iso_sha} gh=${gh_sha}"
+  CONFLICT_BRANCHES+=("${gh_branch} iso=${iso_sha} gh=${gh_sha}")
+  open_or_update_conflict_issue "${gh_branch}" "${iso_sha}" "${gh_sha}" >/dev/null || \
+    echo "  (issue open/update failed for ${gh_branch})"
+done < <(git for-each-ref --format='%(refname)' refs/remotes/iso/)
+
+{
+  echo "## ISO → GitHub mirror summary"
+  echo
+  if (( ${#CREATED[@]} )); then
+    echo "### Created"
+    printf -- '- %s\n' "${CREATED[@]}"
+    echo
+  fi
+  if (( ${#FAST_FORWARDED[@]} )); then
+    echo "### Fast-forwarded"
+    printf -- '- %s\n' "${FAST_FORWARDED[@]}"
+    echo
+  fi
+  if (( ${#INFO_AHEAD[@]} )); then
+    echo "### GitHub ahead of ISO (informational — pending proxy per §7)"
+    printf -- '- %s\n' "${INFO_AHEAD[@]}"
+    echo
+  fi
+  if (( ${#CONFLICT_BRANCHES[@]} )); then
+    echo "### Conflicts — manual resolution required (§6.4)"
+    printf -- '- %s\n' "${CONFLICT_BRANCHES[@]}"
+    echo
+  fi
+  if (( ${#CONFLICT_ISSUES_OPENED[@]} )); then
+    echo "### Conflict issues opened"
+    printf -- '- %s\n' "${CONFLICT_ISSUES_OPENED[@]}"
+    echo
+  fi
+  if (( ${#CONFLICT_ISSUES_UPDATED[@]} )); then
+    echo "### Conflict issues updated"
+    printf -- '- %s\n' "${CONFLICT_ISSUES_UPDATED[@]}"
+    echo
+  fi
+} >> "${GITHUB_STEP_SUMMARY:-/dev/stdout}"
+
+if (( ${#CONFLICT_BRANCHES[@]} )); then
+  echo "::error::${#CONFLICT_BRANCHES[@]} branch conflict(s) detected — see step summary"
+  exit 1
+fi

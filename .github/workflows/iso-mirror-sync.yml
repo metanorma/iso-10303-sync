@@ -1,0 +1,62 @@
+name: iso-mirror-sync
+
+on:
+  schedule:
+    - cron: '0 * * * *'   # hourly
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Log what would happen, push nothing'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['true', 'false']
+
+# This workflow runs in metanorma/iso-10303-sync but operates on
+# metanorma/iso-10303 via the `target` remote (using PRIVATE_TOKEN_GITHUB).
+# Conflict-tracking issues are opened in iso-10303 via GH_REPO env.
+permissions:
+  contents: read
+
+concurrency:
+  group: iso-mirror-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sync repo (for the script)
+        uses: actions/checkout@v4
+
+      - name: Configure git
+        run: |
+          git config user.name  "iso-mirror-bot"
+          git config user.email "actions@github.com"
+
+      - name: Add target remote (metanorma/iso-10303)
+        env:
+          GH_PAT: ${{ secrets.PRIVATE_TOKEN_GITHUB }}
+        run: |
+          git remote add target "https://x-access-token:${GH_PAT}@github.com/metanorma/iso-10303.git"
+
+      - name: Add iso remote (sd.iso.org Bitbucket pilot)
+        env:
+          ISO_BB_PAT: ${{ secrets.ISO_BB_PAT }}
+        run: |
+          git remote add iso "https://:${ISO_BB_PAT}@sd.iso.org/bitbucket-pilot/scm/isotc184sc4/wg12-step.git"
+
+      - name: Fetch iso
+        run: git fetch iso '+refs/heads/*:refs/remotes/iso/*' --prune
+
+      - name: Fetch target
+        run: git fetch target '+refs/heads/*:refs/remotes/target/*' --prune
+
+      - name: Run sync
+        env:
+          GH_TOKEN: ${{ secrets.PRIVATE_TOKEN_GITHUB }}
+          GH_REPO: metanorma/iso-10303
+          DRY_RUN: ${{ inputs.dry_run || 'false' }}
+          PROXY_LAG_THRESHOLD: ${{ vars.PROXY_LAG_THRESHOLD }}
+          ORIGIN_REMOTE: target
+        run: bash scripts/iso-mirror-sync.sh
