@@ -47,15 +47,19 @@ jobs:
       - name: Add iso remote and configure BB auth
         env:
           ISO_BB_PAT: ${{ secrets.ISO_BB_PAT }}
+          ISO_BB_USERNAME: ${{ secrets.ISO_BB_USERNAME }}
         run: |
-          # Write a credential helper that reads PAT from env at invocation time.
-          # The PAT is never written to .git/config or process argv — only the
-          # helper script path is registered. On fetch failure, only the URL
-          # (no credentials) appears in error messages.
-          cat > "$HOME/bb-cred-helper.sh" <<'EOF'
+          # Write a credential helper that reads creds from env at invocation time.
+          # The PAT and username are never written to .git/config or process argv —
+          # only the helper script path is registered. On fetch failure, only the
+          # URL (no credentials) appears in error messages.
+          #
+          # Note: BB Server's git-over-HTTPS endpoint requires a real username
+          # paired with the PAT, unlike the REST API which accepts empty-username.
+          cat > "$HOME/bb-cred-helper.sh" <<EOF
           #!/bin/bash
-          echo username=x-token-auth
-          echo "password=$ISO_BB_PAT"
+          echo "username=\$ISO_BB_USERNAME"
+          echo "password=\$ISO_BB_PAT"
           EOF
           chmod +x "$HOME/bb-cred-helper.sh"
           git config --global credential."https://sd.iso.org".helper "$HOME/bb-cred-helper.sh"
@@ -65,6 +69,7 @@ jobs:
       - name: Fetch iso
         env:
           ISO_BB_PAT: ${{ secrets.ISO_BB_PAT }}
+          ISO_BB_USERNAME: ${{ secrets.ISO_BB_USERNAME }}
         working-directory: target
         run: git fetch iso '+refs/heads/*:refs/remotes/iso/*' --prune
 
