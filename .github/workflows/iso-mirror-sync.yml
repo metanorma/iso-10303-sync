@@ -44,12 +44,16 @@ jobs:
           git config user.name  "iso-mirror-bot"
           git config user.email "metanorma@ribose.com"
 
-      - name: Add iso remote (sd.iso.org Bitbucket pilot)
+      - name: Add iso remote and configure BB auth
         working-directory: target
         env:
           ISO_BB_PAT: ${{ secrets.ISO_BB_PAT }}
         run: |
-          git remote add iso "https://${ISO_BB_PAT}@sd.iso.org/bitbucket-pilot/scm/isotc184sc4/wg12-step.git"
+          git remote add iso "https://sd.iso.org/bitbucket-pilot/scm/isotc184sc4/wg12-step.git"
+          # Pass the PAT via Authorization header (not URL-embedded) so a
+          # failed fetch can never leak it. extraheader is scoped to sd.iso.org.
+          AUTH=$(printf ':%s' "$ISO_BB_PAT" | base64 -w0)
+          git config "http.https://sd.iso.org/.extraheader" "Authorization: Basic ${AUTH}"
 
       - name: Fetch iso
         working-directory: target
