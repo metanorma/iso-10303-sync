@@ -14,7 +14,7 @@ on:
 
 # This workflow runs in metanorma/iso-10303-sync but operates on
 # metanorma/iso-10303 (checked out at ./target via actions/checkout@v6
-# with PRIVATE_TOKEN_GITHUB for auth). Conflict-tracking issues are
+# with METANORMA_CI_PAT_TOKEN for auth). Conflict-tracking issues are
 # opened on iso-10303 via GH_REPO env.
 permissions:
   contents: read
@@ -34,7 +34,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: metanorma/iso-10303
-          token: ${{ secrets.PRIVATE_TOKEN_GITHUB }}
+          token: ${{ secrets.METANORMA_CI_PAT_TOKEN }}
           path: target
           fetch-depth: 0
 
@@ -62,7 +62,7 @@ jobs:
       - name: Run sync
         working-directory: target
         env:
-          GH_TOKEN: ${{ secrets.PRIVATE_TOKEN_GITHUB }}
+          GH_TOKEN: ${{ secrets.METANORMA_CI_PAT_TOKEN }}
           GH_REPO: metanorma/iso-10303
           DRY_RUN: ${{ inputs.dry_run || 'false' }}
           PROXY_LAG_THRESHOLD: ${{ vars.PROXY_LAG_THRESHOLD }}

@@ -114,7 +114,7 @@ flowchart LR
 |---|---|---|
 | `ISO_BB_PAT` | Bitbucket pilot **read-only** PAT (used by mirror bot). The PAT encodes the owning account, so no separate username secret is required — the workflow uses `https://:${ISO_BB_PAT}@host`. | **Added 2026-07-02** |
 | `ISO_BB_PAT_PROXY` | Bitbucket pilot **read+write** PAT (used by proxy users locally — never in CI) | Distribute to proxy users out-of-band |
-| `PRIVATE_TOKEN_GITHUB` | GitHub PAT with `repo` scope; used by bot to push branches and trigger downstream CI | **Already exists** (used by `.github/workflows/build.yml`) |
+| `METANORMA_CI_PAT_TOKEN` | GitHub PAT with `repo` scope on `metanorma/iso-10303`. Used by bot to push branches and to open conflict-tracking issues there. The dedicated name (rather than reusing `PRIVATE_TOKEN_GITHUB` from `build.yml`) keeps the mirror bot's blast radius separate from build CI. | To add to `metanorma/iso-10303-sync` |
 
 > The mirror bot uses fast-forward only (§6.3), so a read-only ISO PAT is sufficient for it. Proxy users need write access on the ISO side — those credentials live with the humans, never in CI. ISO editors use their own Bitbucket accounts; they do not need GitHub access for routine work.
 
@@ -161,7 +161,7 @@ Two valid categories (used by both sides when applicable):
 
 If GitHub branch protection is enabled on `main` (likely, given the PR-driven flow), the mirror bot's hourly fast-forward push to `main` will be **rejected**. Three options — pick one in §11/§12:
 
-- **(a)** Exempt the bot's PAT (`PRIVATE_TOKEN_GITHUB`) from `main` protection via "Allow specified actors to bypass". Recommended.
+- **(a)** Exempt the bot's PAT (`METANORMA_CI_PAT_TOKEN`) from `main` protection via "Allow specified actors to bypass". Recommended.
 - **(b)** Have the bot open a fast-forward PR against `main` and auto-merge. Slower; preserves audit trail.
 - **(c)** Disable protection on `main`. Not recommended.
 
@@ -262,7 +262,7 @@ Triage expectations:
 
 Path (in `metanorma/iso-10303-sync`): `.github/workflows/iso-mirror-sync.yml`
 
-The workflow lives in the **sync repo**. It uses `actions/checkout@v6` twice — once for the sync repo (to get the script), once for `metanorma/iso-10303` (the target, checked out at `./target` with `PRIVATE_TOKEN_GITHUB` for auth). The sync script runs from inside `target/`, where `origin` is naturally `iso-10303`. The `iso` BB remote is added manually (no `actions/checkout` equivalent for Bitbucket Server). Conflict-tracking issues are opened on `metanorma/iso-10303` via `GH_REPO` env.
+The workflow lives in the **sync repo**. It uses `actions/checkout@v6` twice — once for the sync repo (to get the script), once for `metanorma/iso-10303` (the target, checked out at `./target` with `METANORMA_CI_PAT_TOKEN` for auth). The sync script runs from inside `target/`, where `origin` is naturally `iso-10303`. The `iso` BB remote is added manually (no `actions/checkout` equivalent for Bitbucket Server). Conflict-tracking issues are opened on `metanorma/iso-10303` via `GH_REPO` env.
 
 ```yaml
 name: iso-mirror-sync
@@ -296,7 +296,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: metanorma/iso-10303
-          token: ${{ secrets.PRIVATE_TOKEN_GITHUB }}
+          token: ${{ secrets.METANORMA_CI_PAT_TOKEN }}
           path: target
           fetch-depth: 0
 
@@ -324,7 +324,7 @@ jobs:
       - name: Run sync
         working-directory: target
         env:
-          GH_TOKEN: ${{ secrets.PRIVATE_TOKEN_GITHUB }}
+          GH_TOKEN: ${{ secrets.METANORMA_CI_PAT_TOKEN }}
           GH_REPO: metanorma/iso-10303
           DRY_RUN: ${{ inputs.dry_run || 'false' }}
           PROXY_LAG_THRESHOLD: ${{ vars.PROXY_LAG_THRESHOLD }}
@@ -803,7 +803,7 @@ See §8.
 | Cross-team review lag | Proxy queue grows beyond `PROXY_LAG_THRESHOLD` | Escalate in JIRA; consider proxy cadence §12.9 |
 | JIRA ticket reassignment missed | Owner unclear; branch lingers | Audit JIRA ownership quarterly; close stale tickets |
 | Workflow silently disabled | Stale data | Add status badge to README (§11); subscribe to Actions notifications |
-| GitHub PAT lacks push permission | Push rejected in CI | Rotate `PRIVATE_TOKEN_GITHUB` with `repo` scope |
+| GitHub PAT lacks push permission | Push rejected in CI | Rotate `METANORMA_CI_PAT_TOKEN` with `repo` scope |
 | Human force-pushes a mirrored branch | Subsequent run sees divergence | Treat as conflict (§6.4); resolve via §7.11 |
 | Race: branch created on GitHub between fetch and push | Push rejected (already exists) | Logged and skipped; next run reconciles |
 | Editor creates ISO-named branch but never labels it | Branch sits idle | Proxy user can run queue script anytime; also consider a stale-PR bot to remind |
@@ -818,7 +818,7 @@ See §8.
 - [ ] For the two latent-collision branches (§3.5), decide: rename to keep as GitHub-local, OR keep as-is and track as proxy-pending.
 - [ ] Generate a **read-only** Bitbucket pilot PAT for the bot; add as `ISO_BB_PAT` in repo secrets. (Done 2026-07-02. No separate username secret needed — PAT encodes the owning account.)
 - [ ] Distribute **read+write** Bitbucket pilot PATs to proxy users out-of-band (`ISO_BB_PAT_PROXY` — never in CI).
-- [ ] Confirm `PRIVATE_TOKEN_GITHUB` has `repo` scope (already used by `build.yml`).
+- [ ] Add `METANORMA_CI_PAT_TOKEN` secret to `metanorma/iso-10303-sync` (GitHub PAT with `repo` scope on `metanorma/iso-10303`). Dedicated token, not reused from `build.yml`.
 - [ ] Configure branch protection on `main` per §5.4 (recommend option a — bot PAT bypass).
 - [ ] Create the `ready-for-iso-proxy` GitHub label.
 - [ ] Document JIRA workflow conventions (who assigns, who reassigns, what ticket states mean) — share with both teams.
@@ -846,7 +846,7 @@ See §8.
 8. **PR batching default** (§7.8). Confirm 1:1 vs. N:1 vs. main-rolling.
 9. **Proxy cadence.** On-demand (proxy user runs when queue looks long) vs. scheduled (e.g., daily sweep by a designated proxy user).
 10. **ISO PR workflow for round-trip.** Does ISO's Bitbucket process require approval from someone outside the metanorma team? If yes, add lead time to §7 estimates.
-11. **`PRIVATE_TOKEN_GITHUB` reuse.** Confirm the existing secret used by `build.yml` is acceptable for the mirror bot, or create a dedicated `ISO_MIRROR_GITHUB_TOKEN` with narrower scope.
+11. **`METANORMA_CI_PAT_TOKEN` scope.** (Resolved 2026-07-02: dedicated token under this name, kept separate from `PRIVATE_TOKEN_GITHUB` used by `build.yml`, so the mirror bot's blast radius is independent of build CI.) Open follow-up: should this be a GitHub App instead of a user PAT, for finer-grained permissions and easier rotation?
 12. **Editor onboarding.** How do new editors (both sides) learn the workflow? Add a CONTRIBUTING.md section? ISO-side equivalent document?
 13. **CI alignment.** Document the differences between GitHub Actions CI and ISO CI. Decide whether critical checks (EXPRESS validation, schema manifest, build) must pass on both sides before merge.
 14. **JIRA ownership hygiene.** Define the rules for ticket ownership transitions. How often do we audit for stale assignments? Who owns stale-ticket cleanup?
