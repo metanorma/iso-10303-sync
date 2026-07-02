@@ -42,7 +42,7 @@ jobs:
         working-directory: target
         run: |
           git config user.name  "iso-mirror-bot"
-          git config user.email "actions@github.com"
+          git config user.email "metanorma@ribose.com"
 
       - name: Add iso remote (sd.iso.org Bitbucket pilot)
         working-directory: target
