@@ -33,7 +33,7 @@ Conflict-tracking issues are opened on `metanorma/iso-10303` (via `GH_REPO` env)
 
 | Secret | Purpose |
 |--------|---------|
-| `ISO_BB_PAT` | Read-only Bitbucket pilot PAT. The PAT encodes the owning account, so the workflow uses `https://:${ISO_BB_PAT}@host`. |
+| `ISO_BB_PAT` | Read-only Bitbucket pilot PAT. The PAT encodes the owning account, so the workflow uses `https://${ISO_BB_PAT}@host` (PAT as username; curl rejects the empty-user form). |
 | `METANORMA_CI_PAT_TOKEN` | GitHub PAT with `repo` scope on `metanorma/iso-10303`. Used both to push branches to `iso-10303` and to open conflict-tracking issues there. |
 
 Optional repo variable: `PROXY_LAG_THRESHOLD` (integer) — when set, the step summary flags `main` if it's more than N commits ahead of `iso/develop`.
