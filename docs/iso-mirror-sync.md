@@ -112,7 +112,8 @@ flowchart LR
 
 | Secret | Purpose | Status |
 |---|---|---|
-| `ISO_BB_PAT` | Bitbucket pilot **read-only** PAT (used by mirror bot). The PAT encodes the owning account, so no separate username secret is required. The workflow writes a credential helper script that reads the PAT from env at invocation time (the PAT is never written to `.git/config` or process argv), scoped to `sd.iso.org`. On fetch failure, only the URL — never the PAT — appears in error messages. | **Added 2026-07-02** |
+| `ISO_BB_PAT` | Bitbucket pilot **read-only** PAT (used by mirror bot). The workflow passes it to a credential helper script that reads from env at invocation time — the PAT is never written to `.git/config`, the URL, or process argv. On fetch failure, only the URL appears in error messages. | **Added 2026-07-02** |
+| `ISO_BB_USERNAME` | Bitbucket account name paired with the PAT (e.g. `ronald.tse@eccma.org`). Required because BB Server's git-over-HTTPS endpoint, unlike its REST API, rejects requests with no username even when the PAT is valid. Discovered after the empty-username form failed auth on first live run. | To add |
 | `ISO_BB_PAT_PROXY` | Bitbucket pilot **read+write** PAT (used by proxy users locally — never in CI) | Distribute to proxy users out-of-band |
 | `METANORMA_CI_PAT_TOKEN` | GitHub PAT with `repo` scope on `metanorma/iso-10303`. Used by bot to push branches and to open conflict-tracking issues there. The dedicated name (rather than reusing `PRIVATE_TOKEN_GITHUB` from `build.yml`) keeps the mirror bot's blast radius separate from build CI. | To add to `metanorma/iso-10303-sync` |
 
@@ -309,15 +310,19 @@ jobs:
       - name: Add iso remote and configure BB auth
         env:
           ISO_BB_PAT: ${{ secrets.ISO_BB_PAT }}
+          ISO_BB_USERNAME: ${{ secrets.ISO_BB_USERNAME }}
         run: |
-          # Write a credential helper that reads PAT from env at invocation time.
-          # The PAT is never written to .git/config or process argv — only the
-          # helper script path is registered. On fetch failure, only the URL
-          # (no credentials) appears in error messages.
-          cat > "$HOME/bb-cred-helper.sh" <<'EOF'
+          # Write a credential helper that reads creds from env at invocation time.
+          # The PAT and username are never written to .git/config or process argv —
+          # only the helper script path is registered. On fetch failure, only the
+          # URL (no credentials) appears in error messages.
+          #
+          # Note: BB Server's git-over-HTTPS endpoint requires a real username
+          # paired with the PAT, unlike the REST API which accepts empty-username.
+          cat > "$HOME/bb-cred-helper.sh" <<EOF
           #!/bin/bash
-          echo username=x-token-auth
-          echo "password=$ISO_BB_PAT"
+          echo "username=\$ISO_BB_USERNAME"
+          echo "password=\$ISO_BB_PAT"
           EOF
           chmod +x "$HOME/bb-cred-helper.sh"
           git config --global credential."https://sd.iso.org".helper "$HOME/bb-cred-helper.sh"
@@ -327,6 +332,7 @@ jobs:
       - name: Fetch iso
         env:
           ISO_BB_PAT: ${{ secrets.ISO_BB_PAT }}
+          ISO_BB_USERNAME: ${{ secrets.ISO_BB_USERNAME }}
         working-directory: target
         run: git fetch iso '+refs/heads/*:refs/remotes/iso/*' --prune
 
@@ -829,7 +835,8 @@ See §8.
 - [ ] Decide Open Questions §12 (especially §12.1 ISO `main`, §12.3 schedule, §12.4 existing-branch rename, §12.5 bot-vs-PR push strategy, §12.6 PR label name, §12.9 proxy cadence, §12.14 JIRA conventions).
 - [ ] Open a JIRA ticket for the reconciliation work (e.g., `TCSC410303-XXXX`).
 - [ ] For the two latent-collision branches (§3.5), decide: rename to keep as GitHub-local, OR keep as-is and track as proxy-pending.
-- [ ] Generate a **read-only** Bitbucket pilot PAT for the bot; add as `ISO_BB_PAT` in repo secrets. (Done 2026-07-02. No separate username secret needed — PAT encodes the owning account.)
+- [ ] Generate a **read-only** Bitbucket pilot PAT for the bot; add as `ISO_BB_PAT` in repo secrets. (Done 2026-07-02.)
+- [ ] Add `ISO_BB_USERNAME` secret — the Bitbucket account name paired with the PAT (e.g. `ronald.tse@eccma.org`). Required because BB Server's git-over-HTTPS endpoint rejects no-username requests even with a valid PAT, unlike its REST API.
 - [ ] Distribute **read+write** Bitbucket pilot PATs to proxy users out-of-band (`ISO_BB_PAT_PROXY` — never in CI).
 - [ ] Add `METANORMA_CI_PAT_TOKEN` secret to `metanorma/iso-10303-sync` (GitHub PAT with `repo` scope on `metanorma/iso-10303`). Dedicated token, not reused from `build.yml`.
 - [ ] Configure branch protection on `main` per §5.4 (recommend option a — bot PAT bypass).
