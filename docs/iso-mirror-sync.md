@@ -1,6 +1,6 @@
 # ISO ↔ GitHub Mirror & Proxy Specification
 
-**Status:** Draft for review (revision 5 — ISO `main` also mirrored to GitHub `main`; GitHub `mn/main` is Metanorma's default)
+**Status:** Draft for review (revision 6 — `to-iso/` branch prefix convention for proxy-intended branches)
 **Related issue:** https://github.com/metanorma/iso-10303/issues/693
 **Stakeholders:** @ronaldtse, @stuartgalt, @TRThurman
 
@@ -9,6 +9,7 @@
 > **Design changes (2026-07-02):**
 > - **Revision 4:** Default-branch mapping switched from name-mapped (ISO `develop` → GitHub `main`) to name-duplicated (ISO `develop` → GitHub `develop`, FF-only mirror).
 > - **Revision 5:** ISO `main` is now also mirrored to GitHub `main` (FF-only). GitHub's prior `main` branch (with 12 Metanorma-only commits) was renamed to `mn/main` and made the repo default. `mn/main` is now where Metanorma PRs land; `main` and `develop` on GitHub are pure ISO mirrors.
+> - **Revision 6:** Proxy-intended branches on GitHub use the `to-iso/` prefix (e.g., ISO `feature/TCSC410303-3001-foo` → GitHub `to-iso/feature/TCSC410303-3001-foo`). The prefix signals proxy intent unambiguously and is stripped on push to ISO.
 
 ---
 
