@@ -45,17 +45,26 @@ jobs:
           git config user.email "metanorma@ribose.com"
 
       - name: Add iso remote and configure BB auth
-        working-directory: target
         env:
           ISO_BB_PAT: ${{ secrets.ISO_BB_PAT }}
         run: |
+          # Write a credential helper that reads PAT from env at invocation time.
+          # The PAT is never written to .git/config or process argv — only the
+          # helper script path is registered. On fetch failure, only the URL
+          # (no credentials) appears in error messages.
+          cat > "$HOME/bb-cred-helper.sh" <<'EOF'
+          #!/bin/bash
+          echo username=x-token-auth
+          echo "password=$ISO_BB_PAT"
+          EOF
+          chmod +x "$HOME/bb-cred-helper.sh"
+          git config --global credential."https://sd.iso.org".helper "$HOME/bb-cred-helper.sh"
+          cd target
           git remote add iso "https://sd.iso.org/bitbucket-pilot/scm/isotc184sc4/wg12-step.git"
-          # Pass the PAT via Authorization header (not URL-embedded) so a
-          # failed fetch can never leak it. extraheader is scoped to sd.iso.org.
-          AUTH=$(printf ':%s' "$ISO_BB_PAT" | base64 -w0)
-          git config "http.https://sd.iso.org/.extraheader" "Authorization: Basic ${AUTH}"
 
       - name: Fetch iso
+        env:
+          ISO_BB_PAT: ${{ secrets.ISO_BB_PAT }}
         working-directory: target
         run: git fetch iso '+refs/heads/*:refs/remotes/iso/*' --prune
 

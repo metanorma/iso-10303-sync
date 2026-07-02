@@ -22,7 +22,7 @@ actions/checkout@v6                          # sync repo (for scripts/)
 actions/checkout@v6 → ./target               # metanorma/iso-10303 (uses METANORMA_CI_PAT_TOKEN)
 working-directory: target
   git remote add iso …                        # sd.iso.org (no PAT in URL)
-  git config http…extraheader Authorization: Basic base64(:PAT)   # scoped to sd.iso.org
+  credential.helper reads ISO_BB_PAT from env  # PAT never on disk or in argv
   git fetch iso   → refs/remotes/iso/*
   git fetch origin → refs/remotes/origin/*    # origin = iso-10303 (from ./target)
   bash $GITHUB_WORKSPACE/scripts/iso-mirror-sync.sh
@@ -34,7 +34,7 @@ Conflict-tracking issues are opened on `metanorma/iso-10303` (via `GH_REPO` env)
 
 | Secret | Purpose |
 |--------|---------|
-| `ISO_BB_PAT` | Read-only Bitbucket pilot PAT. The PAT encodes the owning account, so no separate username is needed. The workflow passes it via `Authorization: Basic base64(:PAT)` header (git `extraheader` config) — *not* URL-embedded, so a failed fetch can never leak the PAT value in error messages. |
+| `ISO_BB_PAT` | Read-only Bitbucket pilot PAT. The PAT encodes the owning account, so no separate username is needed. The workflow writes a credential helper script that reads the PAT from env at invocation time (never written to `.git/config` or process argv) — so a failed fetch can never leak the PAT value in error messages. |
 | `METANORMA_CI_PAT_TOKEN` | GitHub PAT with `repo` scope on `metanorma/iso-10303`. Used both to push branches to `iso-10303` and to open conflict-tracking issues there. |
 
 Optional repo variable: `PROXY_LAG_THRESHOLD` (integer) — when set, the step summary flags `main` if it's more than N commits ahead of `iso/develop`.
