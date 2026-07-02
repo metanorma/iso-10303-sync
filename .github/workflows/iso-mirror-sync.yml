@@ -49,7 +49,7 @@ jobs:
         env:
           ISO_BB_PAT: ${{ secrets.ISO_BB_PAT }}
         run: |
-          git remote add iso "https://:${ISO_BB_PAT}@sd.iso.org/bitbucket-pilot/scm/isotc184sc4/wg12-step.git"
+          git remote add iso "https://${ISO_BB_PAT}@sd.iso.org/bitbucket-pilot/scm/isotc184sc4/wg12-step.git"
 
       - name: Fetch iso
         working-directory: target

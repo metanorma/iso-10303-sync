@@ -112,7 +112,7 @@ flowchart LR
 
 | Secret | Purpose | Status |
 |---|---|---|
-| `ISO_BB_PAT` | Bitbucket pilot **read-only** PAT (used by mirror bot). The PAT encodes the owning account, so no separate username secret is required — the workflow uses `https://:${ISO_BB_PAT}@host`. | **Added 2026-07-02** |
+| `ISO_BB_PAT` | Bitbucket pilot **read-only** PAT (used by mirror bot). The PAT encodes the owning account, so no separate username secret is required — the workflow uses `https://${ISO_BB_PAT}@host` (PAT as username; curl rejects the empty-user `https://:${PAT}@host` form). | **Added 2026-07-02** |
 | `ISO_BB_PAT_PROXY` | Bitbucket pilot **read+write** PAT (used by proxy users locally — never in CI) | Distribute to proxy users out-of-band |
 | `METANORMA_CI_PAT_TOKEN` | GitHub PAT with `repo` scope on `metanorma/iso-10303`. Used by bot to push branches and to open conflict-tracking issues there. The dedicated name (rather than reusing `PRIVATE_TOKEN_GITHUB` from `build.yml`) keeps the mirror bot's blast radius separate from build CI. | To add to `metanorma/iso-10303-sync` |
 
@@ -311,7 +311,7 @@ jobs:
         env:
           ISO_BB_PAT: ${{ secrets.ISO_BB_PAT }}
         run: |
-          git remote add iso "https://:${ISO_BB_PAT}@sd.iso.org/bitbucket-pilot/scm/isotc184sc4/wg12-step.git"
+          git remote add iso "https://${ISO_BB_PAT}@sd.iso.org/bitbucket-pilot/scm/isotc184sc4/wg12-step.git"
 
       - name: Fetch iso
         working-directory: target
