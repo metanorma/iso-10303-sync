@@ -1,10 +1,12 @@
 # ISO ↔ GitHub Mirror & Proxy Specification
 
-**Status:** Draft for review (revision 3 — two-sided active editing)
+**Status:** Draft for review (revision 4 — name-duplicated ISO `develop` → GitHub `develop`)
 **Related issue:** https://github.com/metanorma/iso-10303/issues/693
 **Stakeholders:** @ronaldtse, @stuartgalt, @TRThurman
 
-> **Implementation note (2026-07-02):** This spec describes the mirror algorithm and design. The implementation lives in [`metanorma/iso-10303-sync`](https://github.com/metanorma/iso-10303-sync) — a dedicated infrastructure repo, separate from the content repo `metanorma/iso-10303`. The workflow YAML in §6.7 reflects the cross-repo shape: it runs in `iso-10303-sync`, adds a `target` remote pointing at `iso-10303`, and pushes there. Nothing sync-related is committed to `iso-10303` itself.
+> **Implementation note (2026-07-02):** This spec describes the mirror algorithm and design. The implementation lives in [`metanorma/iso-10303-sync`](https://github.com/metanorma/iso-10303-sync) — a dedicated infrastructure repo, separate from the content repo `metanorma/iso-10303`. The workflow YAML in §6.7 reflects the cross-repo shape: it runs in `iso-10303-sync`, checks out `iso-10303` at `./target` via `actions/checkout@v6`, and pushes there. Nothing sync-related is committed to `iso-10303` itself.
+
+> **Design change (2026-07-02, revision 4):** Default-branch mapping is now **name-duplicated** (ISO `develop` → GitHub `develop`, fast-forward only, pure ISO mirror). GitHub `main` is no longer the mirror target — it is Metanorma's own integration branch where PRs land. Previous revisions (1–3) used **name-mapped** (ISO `develop` → GitHub `main`), which mixed ISO content with Metanorma PRs and made divergence hard to reason about. The new model cleanly partitions: `develop` is always byte-identical to ISO; `main` is Metanorma-controlled. The reconciliation plan (§8) is correspondingly simpler — no cherry-pick needed, just proxy `main` → ISO `develop`.
 
 ---
 
@@ -15,7 +17,7 @@
 3. **One-way automatic mirror (ISO → GitHub).** A scheduled bot copies every ISO branch to GitHub so both teams see the same branch state without leaving their native tool. GitHub-original work is never silently overwritten.
 4. **Manual proxy flow (GitHub → ISO).** When a GitHub PR is ready for ISO, a credentialed *proxy user* pushes the branch to Bitbucket and opens an ISO PR. This direction is **manual** — crossing the organizational boundary is intentional.
 5. **Single repository.** All of this lives in `metanorma/iso-10303`. No second mirror repo.
-6. **Default-branch reconciliation.** GitHub `main` is content-aligned with ISO `develop` once via §8; afterwards the two *oscillate* — `main` runs ahead as Metanorma PRs merge, reconverges after each proxy event.
+6. **Default-branch mirroring.** ISO `develop` is mirrored to GitHub `develop` (name-duplicated, fast-forward only). GitHub `develop` is **always byte-identical to ISO `develop`** — no PRs land on it directly. GitHub `main` is Metanorma's integration branch where PRs land; it is **not** mirrored to/from ISO directly. To move GitHub `main` work onto ISO, the proxy flow (§7) pushes `main` → ISO `develop` via PR.
 7. **Conflict safety.** When a name collision cannot be resolved by fast-forward, the bot alerts and skips. **The bot never force-pushes** (hard rule).
 
 ## 2. Non-Goals
@@ -52,14 +54,14 @@ Both remotes use the standard `+refs/heads/*:refs/remotes/<name>/*` refspec loca
   - `test-remote-manifest` (transient)
 - **GitHub**: ~40 branches — `mf-*`, `copilot/*`, `fix-*`, `feature/...` (non-ISO), `perform-*`, `rt-*`, numeric GitHub-issue refs (`208-*`, `588-*`, `697-*`, `676-*`, `13584-*`).
 
-### 3.4 Default-branch divergence
-- Merge-base of `main` and `iso/develop`: `68d4270d458b3d600d5e91d2a9d82dd33c6ca47c`
+### 3.4 Default-branch divergence (historical snapshot 2026-06-18, pre-revision-4)
+- Under the **old** name-mapped model: merge-base of `main` and `iso/develop`: `68d4270d458b3d600d5e91d2a9d82dd33c6ca47c`
 - **12 commits on `main` not on `iso/develop`** (GitHub-only work to preserve):
   - SVG map & clickability rework: `de818fa3b`, `ca4ec720f`, `0ca684530`, `609a89087`, `a8aa40726`, `2eed1d0e0`
   - Document identifier updates: `541b5b3e9`, `c0b60f79d`, `c69ce4a933`, `b1d89f5e4`, `7409a13f5`, `0cbcf478e`
   - Module `collection.yml` identifier fix (`TCSC410303-2825`)
 - **180 commits on `iso/develop` not on `main`** (ISO-side work to absorb).
-- Conclusion: GitHub's `main` is significantly **behind** ISO's `develop` and must be reconciled (§8) before ongoing sync can run cleanly.
+- Under revision 4 (name-duplicated, ISO `develop` → GitHub `develop`), the GitHub `develop` branch will be created from `iso/develop`'s tip on the first sync run — absorbing all 180 ISO commits. The 12 GitHub-only commits remain on the historical `main` branch, which becomes Metanorma's integration-only branch. To land those 12 commits on ISO, follow the proxy flow (§7.5) — push from `main` (or a fresh branch carrying them) to ISO `develop` via an ISO PR.
 
 ### 3.5 Latent name collisions on GitHub
 - Only `main` exists on both sides today.
@@ -125,8 +127,8 @@ flowchart LR
 
 | ISO branch | GitHub branch | Rule |
 |---|---|---|
-| `develop` | `main` | Defaults are name-mapped; content oscillates around alignment (§1.6) |
-| `main` | *(not mirrored)* | ISO release branch — out of scope (§12.1) |
+| `develop` | `develop` | Name-duplicated; pure FF-only ISO mirror. Never receives PRs directly. |
+| `main` | *(not mirrored)* | ISO release branch — out of scope (§12.1). GitHub `main` is a separate Metanorma integration branch, not the mirror target. |
 | `<other>` | `<same name>` | 1:1 mirror |
 
 ### 5.2 ISO branch naming patterns (for documentation only — the mirror uses `git fetch iso` as the authoritative source)
@@ -252,12 +254,13 @@ Triage expectations:
 - Reason: with both sides creating ISO-named branches directly on GitHub (§5.3), any pattern-based "this looks ISO but isn't on ISO" heuristic would generate false positives for every un-proxied editor branch.
 - **v2 (optional):** Add stateful pruning detection using a cached snapshot of `refs/remotes/iso/*` from the previous run. Only branches that **were** on ISO last run and **aren't** this run are flagged. Out of scope for v1.
 
-### 6.6 `main` ↔ `develop` — no special alert
+### 6.6 `develop` is a pure FF-only mirror
 
-- ISO `develop` maps to GitHub `main` per §5.1.
-- Same update rules apply — no special alerting.
-- After §8 reconciliation, GitHub `main` will normally be **ahead of** ISO `develop` (because Metanorma PRs merge into `main` continuously and proxy events are batched). This is the expected steady state, surfaced only as informational logging in the step summary.
-- If you want a lag alert, configure `PROXY_LAG_THRESHOLD` (default: off). When set (e.g., `50`), the bot opens an issue if `main` is more than N commits ahead of `iso/develop`, suggesting the proxy queue is backing up.
+- ISO `develop` maps to GitHub `develop` per §5.1.
+- Same update rules apply (create / FF / equal / diverged-alert).
+- Because no PRs land on GitHub `develop` directly, the only expected states are `[equal]` or `[ff]`. Any other state is a real signal worth investigating.
+- GitHub `main` is **not** tracked by the mirror — it is Metanorma's integration branch and can diverge freely from `develop`. The mirror does not alert on `main`.
+- If you want lag alerting for `main` (e.g., "main is N commits ahead of develop, proxy queue backing up"), that is a **GitHub-side** concern outside the mirror's scope. The proxy queue helper (§7.4) reports it locally; CI alerting for it is not implemented in v1.
 
 ### 6.7 Draft workflow file
 
@@ -360,7 +363,6 @@ Path: `scripts/iso-mirror-sync.sh` (executable)
 set -euo pipefail
 
 DRY_RUN="${DRY_RUN:-false}"
-PROXY_LAG_THRESHOLD="${PROXY_LAG_THRESHOLD:-}"   # empty = no lag alert
 ORIGIN_REMOTE=origin
 CONFLICT_BRANCHES=()
 INFO_AHEAD=()
@@ -369,7 +371,7 @@ FAST_FORWARDED=()
 
 map_name() {
   case "$1" in
-    develop) echo main ;;
+    develop) echo develop ;;  # name-duplicated: ISO develop → GitHub develop
     main)    echo "" ;;       # ISO release branch — out of scope (§5.1)
     *)       echo "$1" ;;
   esac
@@ -417,9 +419,6 @@ while read -r iso_ref; do
     n="$(git rev-list --count "$iso_sha..$gh_sha")"
     echo "[info]   $gh_branch ahead of ISO by $n commit(s) — pending proxy (§7)"
     INFO_AHEAD+=("$gh_branch ($n ahead)")
-    if [[ "$gh_branch" == "main" && -n "$PROXY_LAG_THRESHOLD" && "$n" -gt "$PROXY_LAG_THRESHOLD" ]]; then
-      CONFLICT_BRANCHES+=("$gh_branch (main ahead of iso/develop by $n > $PROXY_LAG_THRESHOLD — proxy lag) iso=$iso_sha gh=$gh_sha")
-    fi
     continue
   fi
 
@@ -464,38 +463,52 @@ This is the path work takes from a GitHub PR merge to landing on ISO. It is **ma
 
 ### 7.1 Conceptual model
 
+The proxy flow is **JIRA-driven and feature-branch-centric**, not main-centric. Each farmed-out unit is one JIRA ticket; the branch is created on ISO Bitbucket (where ISO has authority over the source of truth), mirrored to GitHub automatically, worked on via GitHub PR targeting the branch (not `main`), then proxied back to ISO via PR against a target release branch.
+
 ```mermaid
 flowchart LR
-  A[Editor/Dev creates<br/>feature/TCSC410303-N-foo<br/>on GitHub] --> B[Opens PR on GitHub<br/>target: main]
-  B --> C[Github review + merge]
-  C --> D[Label ready-for-iso-proxy]
-  D --> E[Proxy user picks up<br/>from queue §7.4]
-  E --> F{ISO ahead since<br/>last mirror?}
-  F -- no --> G[Push branch to ISO<br/>same name, FF only]
-  F -- yes --> H[Rebase onto iso/develop<br/>or open ISO PR + let BB merge]
-  G --> I[Open ISO PR<br/>target: develop]
-  H --> I
-  I --> J[ISO review + merge]
-  J --> K[Next mirror run:<br/>GitHub FF to ISO SHA]
+  A[1. ISO creates JIRA ticket<br/>assigns to Metanorma] --> B[2. ISO creates branch<br/>feature/TCSC410303-N-foo<br/>on ISO Bitbucket]
+  B --> C[3. Hourly mirror:<br/>gh feature/TCSC410303-N-foo<br/>= iso feature/TCSC410303-N-foo]
+  C --> D[4. Metanorma opens PR<br/>on GitHub<br/>target: feature/TCSC410303-N-foo]
+  D --> E[5. GitHub review + merge<br/>into the branch]
+  E --> F[6. Proxy user pushes branch<br/>back to ISO Bitbucket<br/>FF if iso branch is ancestor]
+  F --> G[7. Proxy opens ISO PR<br/>target: develop OR<br/>SVRP-SRL-... or other release target]
+  G --> H[8. ISO review + merge]
+  H --> I[9. ISO target advances<br/>next mirror run:<br/>gh target FF to ISO SHA]
+  B -.->|if BB deletes<br/>post-merge| J[gh branch lingers<br/>per §6.5 v1]
 ```
+
+**GitHub `main` is not part of this flow.** It is Metanorma's own integration branch (where Metanorma-specific docs / experiments may live); the mirror does not track it. PRs from this flow land on the **feature branch** on GitHub, then via proxy onto a target release branch on ISO.
 
 ### 7.2 Roles in the proxy flow
 
 | Step | Who |
 |---|---|
-| Create branch on GitHub | Metanorma editor / developer |
-| Open & merge PR on GitHub | Metanorma editor / developer + reviewers |
-| Apply `ready-for-iso-proxy` label | Metanorma editor / developer (signals readiness) |
-| Pull from proxy queue, push to ISO, open ISO PR | **Proxy user** |
-| Review & merge on ISO | ISO reviewers (may include the same proxy user) |
+| 1. Create JIRA ticket | ISO editor / product owner |
+| 2. Create branch on ISO Bitbucket (skeleton or initial work) | ISO editor |
+| 3. (Automated) Mirror brings branch to GitHub | Mirror bot |
+| 4. Open PR on GitHub targeting the branch | Metanorma editor / developer |
+| 5. Review & merge on GitHub (into the branch) | Metanorma reviewers + editor |
+| 6. Push branch back to ISO + open ISO PR | **Proxy user** (e.g., `@ronaldtse`, `@stuartgalt`, `@TRThurman`) |
+| 7. Review & merge on ISO against target release branch | ISO reviewers (may include the same proxy user) |
+| 8. (Automated) Mirror brings updated target branch to GitHub | Mirror bot |
+
+The proxy user holds personal read+write BB credentials (§4.2) — they are the only humans authorized to push back to ISO. The bot is strictly one-way.
 
 ### 7.3 Branch lifecycle on GitHub
 
-1. Metanorma editor/developer creates a branch using the ISO naming convention directly (§5.3.A), e.g., `feature/TCSC410303-3001-new-module-foo`.
-2. Opens a PR targeting `main`.
-3. Reviewers review; editor addresses feedback via additional commits to the same branch.
-4. PR merges into `main`. The feature branch typically stays (don't auto-delete — it'll be proxied).
-5. Editor (or reviewer) adds the `ready-for-iso-proxy` label to the merged PR, or opens a tracking issue listing the branch.
+Under the JIRA-driven, feature-branch model (§7.1):
+
+1. ISO creates a JIRA ticket and assigns it to a Metanorma lead.
+2. ISO creates the branch on ISO Bitbucket (`feature/TCSC410303-N-foo`, etc.) — may be a skeleton or contain initial work.
+3. The next mirror run brings the branch to GitHub as the same name.
+4. Metanorma editor/developer checks out the mirrored branch, adds commits, opens a PR on GitHub **targeting the branch** (not `main`).
+5. Reviewers review; editor addresses feedback via additional commits to the same branch.
+6. PR merges into the branch. The branch tip is now ahead of its ISO counterpart.
+7. Proxy user applies `ready-for-iso-proxy` label (or opens a tracking issue) to signal readiness for the proxy push.
+8. Proxy user pushes the branch back to ISO (§7.5), opens ISO PR targeting the chosen release branch.
+9. ISO merges; ISO target release branch advances.
+10. Mirror brings updated target release branch to GitHub; if the BB feature branch persists post-merge, mirror FF's it; if BB deleted it post-merge, the GH copy lingers per §6.5 v1.
 
 ### 7.4 Signaling readiness — the proxy queue
 
@@ -558,18 +571,31 @@ Run these locally as a proxy user (with both `iso` and `origin` remotes configur
 
 ```bash
 BRANCH=feature/TCSC410303-3001-new-module-foo
+TARGET=develop   # or another ISO release target, e.g. SVRP-SRL-1-...
 
 # 1. Make sure you have the latest from both sides.
 git fetch --all --prune
 
-# 2. Push the branch to ISO (creates if missing, fast-forwards if behind).
+# 2. Push the GitHub branch (with merged Metanorma work) back to ISO Bitbucket.
+#    Fast-forward works because ISO branch is the ancestor (Metanorma only added commits).
 git push iso "origin/$BRANCH:$BRANCH"
 
-# 3. Open a Bitbucket pull request targeting develop.
-echo "Open ISO PR: https://sd.iso.org/bitbucket-pilot/projects/ISOTC184SC4/repos/wg12-step/pull-requests?create&sourceBranch=$BRANCH&targetBranch=develop"
+# 3. Open a Bitbucket pull request targeting the chosen release branch.
+echo "Open ISO PR: https://sd.iso.org/bitbucket-pilot/projects/ISOTC184SC4/repos/wg12-step/pull-requests?create&sourceBranch=$BRANCH&targetBranch=$TARGET"
 
-# 4. After ISO merges, the next mirror run fast-forwards GitHub to match.
+# 4. ISO reviewers merge. ISO target branch advances.
+# 5. Next mirror run fast-forwards gh $TARGET (= iso $TARGET) to match.
 ```
+
+`$TARGET` is the ISO release branch you want the work to land on. Common values:
+
+| ISO target | When to use |
+|---|---|
+| `develop` | Default — ongoing integration |
+| `SVRP-SRL-<N>-<slug>` | Specific SRL release epic |
+| `<other>` | Any significant ISO release branch (consult ISO team) |
+
+The proxy user selects `$TARGET` per JIRA epic convention and notes it in the ISO PR description so reviewers know the intent.
 
 ### 7.6 Handling ISO-ahead-during-proxy
 
@@ -592,23 +618,24 @@ git push iso "$BRANCH:feature/TCSC410303-3001-new-module-foo-from-github"
 
 The proxy user picks the path per ISO team convention.
 
-### 7.7 Direct-to-`develop` / `main` proxying
+### 7.7 Direct-to-target proxying
 
-When a batch of GitHub PRs all merge into `main` and the team wants them on ISO `develop` in one shot:
+When a batch of GitHub PRs all merged into a single GitHub-side branch (or accumulated as a sequence of mirrored feature branches) and the team wants them on a specific ISO target release branch in one shot:
 
 ```bash
 git fetch --all --prune
 
-# Option A — push main to develop directly (requires ISO to accept direct pushes):
-git push iso "origin/main:develop"
+# Option A — push a single GH branch to ISO and open PR (default per §7.5):
+git push iso "origin/feature/TCSC410303-XXXX-batch-from-github:feature/TCSC410303-XXXX-batch-from-github"
+# Open ISO PR targeting $TARGET.
 
-# Option B — create a proxy branch on ISO and open a PR (recommended for audit):
+# Option B — create a fresh batch branch on ISO from the GH content and open PR:
 git checkout -B feature/TCSC410303-XXXX-batch-from-github origin/main
 git push iso feature/TCSC410303-XXXX-batch-from-github
-# Open ISO PR targeting develop.
+# Open ISO PR targeting $TARGET.
 ```
 
-After ISO merges, the next mirror run sees `iso/develop` advanced to include the commits, and either fast-forwards `main` (if `main` is now an ancestor) or logs `main` as ahead (if more PRs merged in the meantime — those queue for the next batch).
+After ISO merges against `$TARGET`, the next mirror run sees `iso/$TARGET` advanced to include the commits and fast-forwards `gh/$TARGET` (e.g., `gh/develop`) to the new ISO SHA. Other in-flight GH feature branches continue independently.
 
 ### 7.8 PR batching strategy
 
@@ -622,24 +649,22 @@ Recommend documenting the chosen strategy per JIRA epic in the ISO PR descriptio
 
 ### 7.9 Receiving farmed-out work (ISO → Metanorma)
 
-This is the most common cross-side flow.
+This is the most common cross-side flow. It is always JIRA-driven and ISO-branch-initiated:
 
-**Sub-case A — Metanorma starts fresh on GitHub:**
-1. ISO editor or product owner creates a JIRA ticket (e.g., `TCSC410303-3001-add-foo-module`) and assigns it to a Metanorma lead.
-2. Metanorma lead accepts the assignment in JIRA, then either:
-   - Begins work themselves, or
-   - Re-assigns to a specific Metanorma editor/developer.
-3. Metanorma editor creates `feature/TCSC410303-3001-add-foo-module` on GitHub (§5.3.A).
-4. Standard GitHub PR flow (§7.3) → merge → label `ready-for-iso-proxy`.
-5. Proxy user flushes the queue (§7.5) → ISO PR → ISO merge → mirror reconverges.
+1. ISO editor or product owner creates a JIRA ticket (e.g., `TCSC410303-3001-add-foo-module`) and assigns it to a Metanorma lead. The JIRA ticket assignee field is the canonical source of ownership (§5.5).
+2. ISO creates the branch on Bitbucket first (`feature/TCSC410303-3001-add-foo-module`) — may be a skeleton or contain initial work. This is the authoritative start.
+3. The next hourly mirror run sees the new ISO branch and creates `origin/feature/TCSC410303-3001-add-foo-module` on GitHub.
+4. Metanorma lead accepts in JIRA, then either begins work themselves or reassigns to a specific Metanorma editor/developer.
+5. Metanorma editor checks out the mirrored branch on GitHub, adds commits.
+6. Metanorma opens a PR on GitHub **targeting the branch** (not `main`).
+7. Reviewers review; PR merges into the branch. The branch is now ahead of its ISO counterpart.
+8. Proxy user pushes the branch back to ISO Bitbucket (§7.5 step 2 — fast-forward since ISO branch is ancestor) and opens an ISO PR against the chosen target release branch (`develop` by default, or a specific `SVRP-SRL-...`).
+9. ISO reviewers merge on Bitbucket. ISO target branch advances.
+10. Mirror fast-forwards `gh/<target>` (e.g., `gh/develop`) to the new ISO SHA.
 
-**Sub-case B — ISO created a skeleton branch first:**
-1. ISO editor creates `feature/TCSC410303-3002-extend-bar` on Bitbucket with scaffolding commits, then assigns the JIRA ticket to Metanorma.
-2. Mirror sees the new ISO branch and creates `origin/feature/TCSC410303-3002-extend-bar` on GitHub within the hour.
-3. Metanorma editor checks out the mirrored branch, adds commits, opens PR targeting `main` (with the branch as the PR source).
-4. PR merges. Branch is now ahead of ISO.
-5. Proxy user pushes back to ISO (§7.5 step 2 — fast-forward since ISO branch is ancestor).
-6. ISO PR → merge → mirror reconverges.
+**What about an existing ISO branch that's been worked on in flight?** Same flow. The branch lives on ISO from step 2; if ISO editors also commit to it during Metanorma's work, that's the concurrent-edit case (§7.11) — coordinate via JIRA, one side pauses or the proxy pushes early.
+
+**Metanorma creating a branch on GitHub first** (without an ISO prior) is possible but discouraged under §5.3.A — it means ISO has no record until the mirror brings it back. Use only for Metanorma-side experiments with prefixes like `gh-*` or `mf-*` (§5.3.B).
 
 ### 7.10 Reverse direction (Metanorma → ISO, rare)
 
@@ -674,40 +699,48 @@ Resolution playbook for the proxy user:
 6. Verify the next mirror run reconciles cleanly (no new conflict issue).
 7. Close the conflict issue with a comment recording what was done.
 
-## 8. One-Time Reconciliation: `main` ↔ `develop`
+## 8. One-Time Setup: Creating `metanorma/iso-10303:develop` and Proxying the 12 GitHub-only Commits
+
+Under revision 4 (ISO `develop` → GitHub `develop`, name-duplicated), the first sync run will create `gh/develop` from `iso/develop`'s tip — the 180 ISO commits land there automatically. The 12 GitHub-only commits remain on `gh/main` (Metanorma's branch) and need to be proxied to ISO so they don't get lost.
 
 ### 8.1 Goal
 
-Converge GitHub `main` and ISO `develop` once so subsequent mirror runs only see the expected "GitHub ahead via pending PRs" state — not the current 180-commits-behind mess.
+After this one-time setup, `gh/develop` exists and is in sync with `iso/develop`. The 12 GitHub-only commits have been proxied to ISO `develop` via the standard proxy flow (§7.5). Ongoing sync then operates cleanly.
 
 ### 8.2 Plan
 
-1. **Create a reconciliation branch from `iso/develop`:**
+1. **Trigger the first live mirror run.** Once `metanorma/iso-10303-sync`'s `main` has the revision-4 mapping, the next hourly run will:
+   - Create `gh/develop` from `iso/develop`'s tip (180 commits).
+   - Create all the other BB branches on GitHub.
+   - Open no conflict issue on `develop` (FF from none → some).
+   - Open no conflict issue on any other BB branch.
+
+2. **Push the 12 GitHub-only commits from `gh/main` to ISO via the standard proxy flow:**
+   - Pick a JIRA ticket for the proxy batch (e.g., `TCSC410303-XXXX-main-reconcile-batch-from-github`).
+   - From your local checkout of `metanorma/iso-10303-sync`:
+     ```bash
+     git fetch --all --prune
+     # Create a batch branch carrying the 12 commits.
+     git checkout -b feature/TCSC410303-XXXX-main-reconcile-batch-from-github origin/main
+     git push iso feature/TCSC410303-XXXX-main-reconcile-batch-from-github
+     # Open an ISO PR targeting `develop` (or a specific SVRP release target).
+     ```
+   - ISO reviewers merge. ISO `develop` advances with the 12 commits (now 192 ahead of where it was).
+   - Next mirror run fast-forwards `gh/develop` to the new ISO `develop` tip.
+
+3. **Confirm convergence:**
    ```bash
-   git fetch iso
-   git checkout -b feature/TCSC410303-XXXX-github-main-reconcile iso/develop
-   ```
-   (Pick the next available `TCSC410303` ticket number; track via JIRA.)
-2. **Cherry-pick the 12 GitHub-only commits in chronological order:**
-   ```bash
-   # merge-base = 68d4270d458b3d600d5e91d2a9d82dd33c6ca47c
-   git cherry-pick 68d4270d..origin/main
-   ```
-   Resolve conflicts commit-by-commit. The 12 commits are isolated metanorma-side changes (SVG maps, doc identifiers, `collection.yml`), so conflicts should be localized.
-3. **Proxy-push the reconciliation branch to ISO** (§7.5):
-   ```bash
-   git push iso feature/TCSC410303-XXXX-github-main-reconcile
-   ```
-4. **Open an ISO PR** targeting `develop`. Note in the description: *"This reconciles GitHub's `main` with ISO's `develop`. After merge, both branches share content and the mirror + proxy workflow keeps them aligned going forward."*
-5. **Merge on ISO.**
-6. **Mirror fast-forwards `main`.** Next hourly run sees `iso/develop` advanced past `origin/main` (which is now an ancestor) and fast-forwards `main` to `iso/develop`'s tip.
-7. **Confirm convergence:**
-   ```bash
-   git fetch --all
-   test "$(git rev-parse origin/main)" = "$(git rev-parse iso/develop)" \
-     && echo "main and develop converged" \
+   git fetch --all --prune
+   test "$(git rev-parse origin/develop)" = "$(git rev-parse iso/develop)" \
+     && echo "develop and iso/develop converged" \
      || echo "DIVERGED — investigate"
    ```
+
+4. **(Optional, cleanup) Retire `gh/main`'s historical commits.** If the team no longer needs the 12 commits on `gh/main` as a Metanorma-internal record, the historical `main` can be reset to point at the new `develop` (or another chosen anchor) via a force-push by a human. This is a separate PR and out of scope here.
+
+### 8.3 Rollback
+
+If the ISO PR for the batch is rejected, abandon the batch branch on ISO. `gh/develop` is unaffected (it only FF's from ISO). The 12 GitHub-only commits remain on `gh/main` and can be retried later.
 
 ### 8.3 Rollback
 

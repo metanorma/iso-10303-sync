@@ -11,6 +11,7 @@ echo
 
 while read -r gh_ref; do
   gh_branch="${gh_ref#refs/remotes/origin/}"
+  # main is Metanorma's own branch, not tracked by the mirror — skip.
   [[ "${gh_branch}" == "HEAD" || "${gh_branch}" == "main" ]] && continue
 
   case "${gh_branch}" in
@@ -39,8 +40,11 @@ while read -r gh_ref; do
 done < <(git for-each-ref --format='%(refname)' refs/remotes/origin/)
 
 echo
-echo "# main ahead of develop"
-main_ahead="$(git rev-list --count "iso/develop..origin/main" 2>/dev/null || echo 0)"
-if [[ "${main_ahead}" -gt 0 ]]; then
-  echo "- main is ahead of iso/develop by ${main_ahead} commit(s) — consider proxying via §7.7"
+echo "# develop status"
+develop_ahead="$(git rev-list --count "iso/develop..origin/develop" 2>/dev/null || echo 0)"
+develop_behind="$(git rev-list --count "origin/develop..iso/develop" 2>/dev/null || echo 0)"
+if [[ "${develop_ahead}" -eq 0 && "${develop_behind}" -eq 0 ]]; then
+  echo "- develop is in sync with iso/develop"
+else
+  echo "- develop ahead of iso/develop: ${develop_ahead}; behind: ${develop_behind}"
 fi

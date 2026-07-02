@@ -2,6 +2,8 @@
 
 Hourly one-way mirror of the ISO TC184/SC4 `wg12-step` Bitbucket repository into [`metanorma/iso-10303`](https://github.com/metanorma/iso-10303). Fast-forward only; never force-pushes. Diverged branches open `[iso-mirror] Conflict: <branch>` issues on `metanorma/iso-10303` for human triage.
 
+Branch mapping: ISO `develop` → GitHub `develop` (pure FF-only mirror). GitHub `main` is Metanorma's own integration branch and is **not** tracked by this mirror.
+
 This repo exists as **infrastructure only** — it holds the GitHub Actions workflow, the sync scripts, and the spec. The mirrored content (documents, schemas) lives in `metanorma/iso-10303`; nothing sync-related is committed there.
 
 ## Layout
@@ -27,6 +29,8 @@ working-directory: target
   git fetch origin → refs/remotes/origin/*    # origin = iso-10303 (from ./target)
   bash $GITHUB_WORKSPACE/scripts/iso-mirror-sync.sh
 ```
+
+The sync script applies the mapping `develop → develop` (name-duplicated), so ISO `develop` advances land on GitHub `develop` (FF only). All other ISO branches land on same-name GitHub branches. GitHub `main` is not tracked.
 
 Conflict-tracking issues are opened on `metanorma/iso-10303` (via `GH_REPO` env) so the team sees them where the content lives — not here.
 

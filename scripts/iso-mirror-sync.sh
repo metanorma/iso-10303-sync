@@ -13,7 +13,6 @@
 set -euo pipefail
 
 DRY_RUN="${DRY_RUN:-false}"
-PROXY_LAG_THRESHOLD="${PROXY_LAG_THRESHOLD:-}"
 ORIGIN_REMOTE="${ORIGIN_REMOTE:-origin}"
 ORIGIN_REF_PREFIX="refs/remotes/${ORIGIN_REMOTE}/"
 REPO="${GH_REPO:-}"          # owner/repo for gh CLI; auto-detected if empty
@@ -28,8 +27,8 @@ CONFLICT_ISSUES_UPDATED=()
 
 map_name() {
   case "$1" in
-    develop) echo main ;;
-    main)    echo "" ;;       # ISO release branch — out of scope (§5.1)
+    develop) echo develop ;;  # name-duplicated: ISO develop → GitHub develop (pure FF-only mirror)
+    main)    echo "" ;;       # ISO release branch — out of scope (§5.1). GitHub main is Metanorma's integration branch, NOT mirrored.
     *)       echo "$1" ;;
   esac
 }
@@ -148,9 +147,6 @@ while read -r iso_ref; do
     n="$(git rev-list --count "${iso_sha}..${gh_sha}")"
     echo "[info]   ${gh_branch} ahead of ISO by ${n} commit(s) — pending proxy (§7)"
     INFO_AHEAD+=("${gh_branch} (${n} ahead)")
-    if [[ "${gh_branch}" == "main" && -n "${PROXY_LAG_THRESHOLD}" && "${n}" -gt "${PROXY_LAG_THRESHOLD}" ]]; then
-      CONFLICT_BRANCHES+=("${gh_branch} (main ahead of iso/develop by ${n} > ${PROXY_LAG_THRESHOLD} — proxy lag) iso=${iso_sha} gh=${gh_sha}")
-    fi
     continue
   fi
 

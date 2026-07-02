@@ -83,5 +83,4 @@ jobs:
           GH_TOKEN: ${{ secrets.METANORMA_CI_PAT_TOKEN }}
           GH_REPO: metanorma/iso-10303
           DRY_RUN: ${{ inputs.dry_run || 'false' }}
-          PROXY_LAG_THRESHOLD: ${{ vars.PROXY_LAG_THRESHOLD }}
         run: bash "$GITHUB_WORKSPACE/scripts/iso-mirror-sync.sh"
