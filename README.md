@@ -15,15 +15,16 @@ This repo exists as **infrastructure only** — it holds the GitHub Actions work
 
 ## How the workflow works
 
-It runs in *this* repo (so the script is available locally), then operates on the two content remotes via `git`:
+It runs in *this* repo (so the script is available locally), then checks out `metanorma/iso-10303` into `./target` and runs the sync script from there:
 
 ```
-actions/checkout@v4          # checks out THIS repo (for scripts/)
-git remote add target …       # metanorma/iso-10303 (uses PRIVATE_TOKEN_GITHUB)
-git remote add iso …          # sd.iso.org Bitbucket pilot (uses ISO_BB_PAT)
-git fetch iso   → refs/remotes/iso/*
-git fetch target → refs/remotes/target/*
-bash scripts/iso-mirror-sync.sh   # with ORIGIN_REMOTE=target
+actions/checkout@v6                          # sync repo (for scripts/)
+actions/checkout@v6 → ./target               # metanorma/iso-10303 (uses METANORMA_CI_PAT_TOKEN)
+working-directory: target
+  git remote add iso …                        # sd.iso.org Bitbucket pilot (uses ISO_BB_PAT)
+  git fetch iso   → refs/remotes/iso/*
+  git fetch origin → refs/remotes/origin/*    # origin = iso-10303 (from ./target)
+  bash $GITHUB_WORKSPACE/scripts/iso-mirror-sync.sh
 ```
 
 Conflict-tracking issues are opened on `metanorma/iso-10303` (via `GH_REPO` env) so the team sees them where the content lives — not here.
@@ -33,7 +34,7 @@ Conflict-tracking issues are opened on `metanorma/iso-10303` (via `GH_REPO` env)
 | Secret | Purpose |
 |--------|---------|
 | `ISO_BB_PAT` | Read-only Bitbucket pilot PAT. The PAT encodes the owning account, so the workflow uses `https://:${ISO_BB_PAT}@host`. |
-| `PRIVATE_TOKEN_GITHUB` | GitHub PAT with `repo` scope on `metanorma/iso-10303`. Used both to push branches to `iso-10303` and to open conflict-tracking issues there. |
+| `METANORMA_CI_PAT_TOKEN` | GitHub PAT with `repo` scope on `metanorma/iso-10303`. Used both to push branches to `iso-10303` and to open conflict-tracking issues there. |
 
 Optional repo variable: `PROXY_LAG_THRESHOLD` (integer) — when set, the step summary flags `main` if it's more than N commits ahead of `iso/develop`.
 
