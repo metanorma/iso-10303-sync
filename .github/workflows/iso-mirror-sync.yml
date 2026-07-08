@@ -77,10 +77,26 @@ jobs:
         working-directory: target
         run: git fetch origin '+refs/heads/*:refs/remotes/origin/*' --prune
 
+      - name: Restore ISO branch snapshot
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/iso-branches-snapshot.txt
+          key: iso-branches-snapshot  # immutable key never matches; falls back to restore-keys
+          restore-keys: |
+            iso-branches-snapshot-
+
       - name: Run sync
         working-directory: target
         env:
           GH_TOKEN: ${{ secrets.METANORMA_CI_PAT_TOKEN }}
           GH_REPO: metanorma/iso-10303
           DRY_RUN: ${{ inputs.dry_run || 'false' }}
+          SNAPSHOT_FILE: ${{ runner.temp }}/iso-branches-snapshot.txt
         run: bash "$GITHUB_WORKSPACE/scripts/iso-mirror-sync.sh"
+
+      - name: Save ISO branch snapshot
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/iso-branches-snapshot.txt
+          key: iso-branches-snapshot-${{ github.run_id }}-${{ github.run_attempt }}
