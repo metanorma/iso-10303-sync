@@ -17,6 +17,7 @@ ORIGIN_REMOTE="${ORIGIN_REMOTE:-origin}"
 ORIGIN_REF_PREFIX="refs/remotes/${ORIGIN_REMOTE}/"
 REPO="${GH_REPO:-}"          # owner/repo for gh CLI; auto-detected if empty
 CONFLICT_LABEL="${CONFLICT_LABEL:-iso-mirror-conflict}"
+SNAPSHOT_FILE="${SNAPSHOT_FILE:-/tmp/iso-branches-snapshot.txt}"
 
 CREATED=()
 FAST_FORWARDED=()
@@ -24,6 +25,14 @@ INFO_AHEAD=()
 CONFLICT_BRANCHES=()
 CONFLICT_ISSUES_OPENED=()
 CONFLICT_ISSUES_UPDATED=()
+
+# Pruning-detection output (alert-only — the bot NEVER auto-deletes).
+# Parallel arrays because bash lacks structs.
+PRUNABLE_DELETE_BRANCH=()
+PRUNABLE_DELETE_SHA=()
+PRUNABLE_PRESERVE_BRANCH=()
+PRUNABLE_PRESERVE_SHA=()
+PRUNABLE_PRESERVE_UNIQUE_COUNT=()
 
 map_name() {
   case "$1" in
@@ -156,6 +165,83 @@ while read -r iso_ref; do
     echo "  (issue open/update failed for ${gh_branch})"
 done < <(git for-each-ref --format='%(refname)' refs/remotes/iso/)
 
+# === Pruning detection (stateful, alert-only) ============================
+# See docs/iso-mirror-sync.md §6.5. Compares current ISO branches against a
+# snapshot from the previous run. Branches that were on ISO last run but are
+# gone now are pruning candidates. For each gone branch with a GitHub
+# counterpart: if gh_sha is reachable from any current ISO branch → safe to
+# delete; otherwise → preserve (GitHub has unique commits not in ISO).
+# The bot NEVER deletes branches automatically — this is alert-only.
+
+declare -A prev_iso_branches=()
+if [[ -f "${SNAPSHOT_FILE}" ]]; then
+  while IFS=' ' read -r p_branch p_sha; do
+    [[ -z "${p_branch}" ]] && continue
+    prev_iso_branches["${p_branch}"]="${p_sha}"
+  done < "${SNAPSHOT_FILE}"
+fi
+
+declare -A curr_iso_branches=()
+while read -r iso_ref; do
+  iso_branch="${iso_ref#refs/remotes/iso/}"
+  [[ "${iso_branch}" == "HEAD" ]] && continue
+  curr_iso_branches["${iso_branch}"]="$(git rev-parse "${iso_ref}")"
+done < <(git for-each-ref --format='%(refname)' refs/remotes/iso/)
+
+# Persist current snapshot for next run (always overwrite — even on conflict
+# exits, the workflow's `if: always()` cache-save step picks this up).
+: > "${SNAPSHOT_FILE}"
+for branch in "${!curr_iso_branches[@]}"; do
+  printf '%s %s\n' "${branch}" "${curr_iso_branches[${branch}]}" >> "${SNAPSHOT_FILE}"
+done
+
+# Pruning detection only runs if we have a previous snapshot to compare.
+if (( ${#prev_iso_branches[@]} > 0 )); then
+  iso_tips=()
+  exclude_args=()
+  for branch in "${!curr_iso_branches[@]}"; do
+    iso_tips+=("${curr_iso_branches[${branch}]}")
+    exclude_args+=("^${curr_iso_branches[${branch}]}")
+  done
+
+  for gone_branch in "${!prev_iso_branches[@]}"; do
+    # Skip branches still on ISO
+    [[ -n "${curr_iso_branches[${gone_branch}]:-}" ]] && continue
+
+    gh_branch="$(map_name "${gone_branch}")"
+    [[ -z "${gh_branch}" ]] && continue
+    gh_ref="${ORIGIN_REF_PREFIX}${gh_branch}"
+
+    # Skip if GitHub branch is also gone
+    if ! git rev-parse --verify --quiet "${gh_ref}" >/dev/null 2>&1; then
+      continue
+    fi
+
+    gh_sha="$(git rev-parse "${gh_ref}")"
+
+    # Reachability: is gh_sha an ancestor of any current ISO branch?
+    reachable=false
+    for tip in "${iso_tips[@]}"; do
+      if git merge-base --is-ancestor "${gh_sha}" "${tip}" 2>/dev/null; then
+        reachable=true
+        break
+      fi
+    done
+
+    if $reachable; then
+      echo "[prune:delete] ${gh_branch} (was iso/${gone_branch}; GitHub tip ${gh_sha:0:12} reachable from ISO)"
+      PRUNABLE_DELETE_BRANCH+=("${gh_branch}")
+      PRUNABLE_DELETE_SHA+=("${gh_sha}")
+    else
+      unique_count=$(git rev-list --count "${gh_sha}" "${exclude_args[@]}" 2>/dev/null || echo "?")
+      echo "[prune:keep]    ${gh_branch} (GitHub has ${unique_count} unique commit(s) not on ISO)"
+      PRUNABLE_PRESERVE_BRANCH+=("${gh_branch}")
+      PRUNABLE_PRESERVE_SHA+=("${gh_sha}")
+      PRUNABLE_PRESERVE_UNIQUE_COUNT+=("${unique_count}")
+    fi
+  done
+fi
+
 {
   echo "## ISO → GitHub mirror summary"
   echo
@@ -187,6 +273,34 @@ done < <(git for-each-ref --format='%(refname)' refs/remotes/iso/)
   if (( ${#CONFLICT_ISSUES_UPDATED[@]} )); then
     echo "### Conflict issues updated"
     printf -- '- %s\n' "${CONFLICT_ISSUES_UPDATED[@]}"
+    echo
+  fi
+  if (( ${#PRUNABLE_DELETE_BRANCH[@]} )); then
+    echo "### Pruning candidates — safe to delete (GitHub tip reachable from ISO)"
+    for i in "${!PRUNABLE_DELETE_BRANCH[@]}"; do
+      echo "- \`${PRUNABLE_DELETE_BRANCH[$i]}\` (\`${PRUNABLE_DELETE_SHA[$i]:0:12}\`) — was on ISO, now merged into a current ISO branch"
+    done
+    echo
+    echo "<details><summary>Delete commands (click to expand)</summary>"
+    echo
+    echo '```sh'
+    for b in "${PRUNABLE_DELETE_BRANCH[@]}"; do
+      echo "git push ${ORIGIN_REMOTE} :${b}"
+    done
+    echo '```'
+    echo
+    echo "</details>"
+    echo
+    echo "The bot does not auto-delete. Run the commands above manually after review."
+    echo
+  fi
+  if (( ${#PRUNABLE_PRESERVE_BRANCH[@]} )); then
+    echo "### Pruning candidates — preserve (GitHub has unique commits not on ISO)"
+    for i in "${!PRUNABLE_PRESERVE_BRANCH[@]}"; do
+      echo "- \`${PRUNABLE_PRESERVE_BRANCH[$i]}\` (\`${PRUNABLE_PRESERVE_SHA[$i]:0:12}\`) — ${PRUNABLE_PRESERVE_UNIQUE_COUNT[$i]} unique commit(s)"
+    done
+    echo
+    echo "These branches need proxy-push (§7) or explicit human review before deletion."
     echo
   fi
 } >> "${GITHUB_STEP_SUMMARY:-/dev/stdout}"

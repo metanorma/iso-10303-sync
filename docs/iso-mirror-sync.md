@@ -264,11 +264,40 @@ Triage expectations:
 - A proxy user reviews conflict issues at least weekly.
 - Issues that remain open >14 days without activity are escalated (stale bot or human nudged via JIRA ticket).
 
-### 6.5 Branch deletion (ISO side)
+### 6.5 Branch deletion (ISO side) — stateful pruning detection
 
-- **v1:** The bot does **not** attempt pruning detection. ISO branch deletion is the proxy user's responsibility — they track what they pushed and remove stale GitHub copies as needed.
-- Reason: with both sides creating ISO-named branches directly on GitHub (§5.3), any pattern-based "this looks ISO but isn't on ISO" heuristic would generate false positives for every un-proxied editor branch.
-- **v2 (optional):** Add stateful pruning detection using a cached snapshot of `refs/remotes/iso/*` from the previous run. Only branches that **were** on ISO last run and **aren't** this run are flagged. Out of scope for v1.
+When ISO deletes a branch (typically post-merge), the corresponding GitHub copy lingers. The mirror surfaces these as **pruning candidates** in the step summary — alert-only, never auto-deleted.
+
+**Algorithm (implemented):**
+
+1. Each run loads a snapshot of the previous run's ISO branches (`iso-branches-snapshot-*` Actions cache key; restore-keys prefix `iso-branches-snapshot-`).
+2. After fetching `iso`, the script builds the current snapshot and persists it for the next run (overwrites `${RUNNER_TEMP}/iso-branches-snapshot.txt`, saved via `actions/cache/save@v4` with `if: always()` so it survives conflict-exit runs).
+3. For each branch in the previous snapshot but missing from the current one:
+   - Look up the corresponding GitHub branch via `map_name` (§5.1).
+   - If GitHub branch is also gone → nothing to do.
+   - If GitHub branch exists → check reachability:
+     - Is `gh_sha` an ancestor of any current ISO branch (`iso/develop`, `iso/main`, any `iso/*`)?
+     - **Yes (reachable)** → all GitHub commits are in ISO → listed under "safe to delete" with ready-to-run `git push origin :<branch>` commands.
+     - **No (not reachable)** → GitHub has unique commits → listed under "preserve" with the count of unique commits.
+
+**Scope:**
+
+- Only mirror-passthrough branches are considered (same-name as ISO). GitHub-local branches (`mn/*`, `mf-*`, `gh-*`, `<NNN>-*`) and proxy-intended branches (`to-iso/*`) are never in the ISO snapshot, so they're never flagged.
+- The bot **never auto-deletes**. A human reviews the step summary and runs the suggested `git push origin :<branch>` commands.
+
+**First run:**
+
+- No previous snapshot exists → pruning detection is skipped that run. The current snapshot is still saved, so subsequent runs have a baseline.
+
+**Failure modes:**
+
+| Scenario | Behavior |
+|---|---|
+| Snapshot cache miss (first run, or cache evicted) | Skip pruning detection, save new snapshot |
+| Conflict-exit (sync script exits 1) | Snapshot is still saved (`if: always()` on cache-save step); pruning output is in the step summary before the exit |
+| ISO force-pushes a branch (rewrites history) | Branch is still "on ISO" (just at a different SHA); not flagged as gone |
+| ISO renames a branch | Old name gone + new name appears; old name's GitHub counterpart flagged via reachability check (typically reachable from the renamed ISO branch) |
+| GitHub branch already manually deleted | Skipped (no GitHub counterpart) |
 
 ### 6.6 `develop` and `main` are pure FF-only ISO mirrors
 
